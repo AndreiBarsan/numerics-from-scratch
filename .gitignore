@@ -16,3 +16,4 @@ csv/
 fig/
 recordings/
 blender/
+__pycache__/
