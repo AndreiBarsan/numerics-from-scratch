@@ -195,13 +195,10 @@ def levenberg_marquardt(f, J, x0, **kw):
         f: The function to minimize.
         J: The Jacobian of f.
         x0: The initial value of f's parameters, x.
-        model: If fitting a residual function, the model part of it.
-               Optional, and used only for visualization.
 
     Keyword Args:
-        ground_truth: The ground truth value of x. Used for visualizing a
-                      comparison between the true model and the estimated ones.
-        plot: Whether convergence plots should be shown.
+        convergence_epsilong_g:
+        convergence_epsilong_h:
 
     Returns:
         x*: The value of the optimal parameters.
@@ -331,6 +328,28 @@ def levenberg_marquardt(f, J, x0, **kw):
 
 
 def plot_trace(f, J, x, model, scipy_opt_result, steps_taken, trace, **kw):
+    """Plots the evolution of various parameters during the optimization procedure.
+
+    Args:
+        f: The function to minimize.
+        J: The Jacobian of f.
+        x: The optimal parameters.
+        model: If fitting a residual function, the model part of it.
+               Optional, and used only for visualization.
+        scipy_opt_result: Result object produced by scipy's levenberg_marquardt
+                          method.
+        steps_taken: Total numer of steps performed by our optimization
+                     procedure.
+        trace: Dictionary containing the values of F, g's l_infinity norm,
+               and the mus over the course of the optimization procedure.
+
+    Keyword Args:
+        ground_truth: The ground truth value of x. Used for visualizing a
+                      comparison between the true model and the estimated ones.
+
+    Returns:
+        None
+    """
     # First, plot the values of F, ||g||, and mu over time.
     plt.figure()
     plt.plot(np.arange(0, steps_taken), trace['F_vals'], label='F')
