@@ -5,12 +5,14 @@ employed by industry-grade libraries like MINPACK, but works well on simple
 examples (see 'main' for a couple).
 """
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 
-
+import scipy
 from scipy import optimize
 from sklearn.utils import shuffle as sk_shuffle
+
+from gauss_elim import *
 
 
 def model_fitting_M(x, t):
@@ -161,6 +163,30 @@ def F(f, xx, N):
     return 1.0 / N * np.dot(f(xx).T, f(xx))
 
 
+def solve(A, b, naive=False):
+    """Quick version which requires A to be PSD."""
+    # Under the hood, this uses LAPACK's _gesv routine, which does not assume
+    #  A is PSD even though, in our case, being the result of (J^T J), it is.
+    # In other words, we shouldn't directly use 'solve', since it's too
+    # generic. We can use further knowledge about our use case to speed this
+    # stuff up.
+    # return np.linalg.solve(A, b)
+
+    print("(solve) >>> Performing Cholesky")
+
+    if naive:
+        # This performs basically as good as the scipy solver.
+        # x = np.linalg.inv(A) * b
+
+        L = np.linalg.cholesky(A)
+        # Using this performs worse than 'cho_solve', but is still correct.
+        x = solve_triang_subst(A, b, substitution=FORWARD_SUBSTITUTION)
+        return x
+    else:
+        (c_res_dirty, is_lower) = scipy.linalg.cho_factor(A)
+        return scipy.linalg.cho_solve((c_res_dirty, is_lower), b)
+
+
 def levenberg_marquardt(f, J, x0, **kw):
     """Minimizes the function f using the Levenberg-Marquardt method.
     The implementation closely follows Algorithm 3.16. from [Madsen, 2004].
@@ -231,7 +257,7 @@ def levenberg_marquardt(f, J, x0, **kw):
 
         # Solve for the optimal increment h
         I = np.eye(M)
-        h_lm = np.linalg.solve(A + mu * I, -g)
+        h_lm = solve(A + mu * I, -g)
 
         g_infty_norm = np.linalg.norm(g, np.inf)
         F_current = F(f, x, N)
@@ -285,7 +311,7 @@ def levenberg_marquardt(f, J, x0, **kw):
 
     log("Levenberg-Marquardt optimization complete.")
     if not found:
-        log("Warning: terminated without finding optimum ({} steps)", end='')
+        log("Warning: terminated without finding optimum ", end='')
     else:
         log("Found an optimum ", end='')
 
@@ -304,8 +330,7 @@ def levenberg_marquardt(f, J, x0, **kw):
     return x, step, opt_result, trace
 
 
-def plot_trace(f, J, x, model, scipy_opt_result, steps_taken, trace,
-               **kw):
+def plot_trace(f, J, x, model, scipy_opt_result, steps_taken, trace, **kw):
     # First, plot the values of F, ||g||, and mu over time.
     plt.figure()
     plt.plot(np.arange(0, steps_taken), trace['F_vals'], label='F')
