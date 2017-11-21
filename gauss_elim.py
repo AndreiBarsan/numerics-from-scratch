@@ -2,6 +2,7 @@
 
 import unittest
 
+import matplotlib.pyplot as plt
 import numpy as np
 import scipy.linalg as sp_la
 
@@ -59,58 +60,89 @@ def solve_triang_subst(A: np.ndarray, b: np.ndarray,
     return x
 
 
-class TestSubstitutions(unittest.TestCase):
-
-    def __init__(self):
-        pass
-
-
 def check(sol: np.ndarray, x_gt: np.ndarray, description: str) -> None:
-    print("Solution found with {}:".format(description))
-    print(sol)
     if not np.allclose(sol, x_gt):
         print("Ground truth (not achieved...)")
         print(x_gt)
+        print("(Inaccurate) solution found with {}:".format(description))
+        print(sol)
         raise ValueError("{} did not work!".format(description))
 
 
 def fuzz_test_solving():
-    # TODO try proper 100x100, 1000x1000 matrices for testing!
     # TODO make into actual test case
-    # TODO plot residual magnitudes with and without refinement
 
-    N_ITERATIONS = 200
-    refine_result = True
+    N_ITERATIONS = 1000
+    errors = {}
+    sizes = {}
     for mode in [FORWARD_SUBSTITUTION, BACKWARD_SUBSTITUTION]:
-        print("Starting mode {}".format(mode))
-        for iteration in range(N_ITERATIONS):
-            N = np.random.randint(3, 250)
-            A = np.random.uniform(0.0, 1.0, [N, N]).astype(np.float64)
+        solvers = {
+            "Custom (No refine)": lambda A, b: solve_triang_subst(A, b, substitution=mode, refine_result=False),
+            "Custom (Refine)": lambda A, b: solve_triang_subst(A, b, substitution=mode, refine_result=True),
+            "Generic SciPy": lambda A, b: sp_la.solve(A, b),
+            "Triangular SciPy": lambda A, b: sp_la.solve_triangular(A, b, lower=mode == FORWARD_SUBSTITUTION)
+        }
 
-            if mode == BACKWARD_SUBSTITUTION:
-                A = np.triu(A)
-            elif mode == FORWARD_SUBSTITUTION:
-                A = np.tril(A)
-            else:
-                raise ValueError()
+        for solver_name, solver in solvers.items():
+            for iteration in range(N_ITERATIONS):
+                N = np.random.randint(2, 251)
+                A = np.random.uniform(0.0, 1.0, [N, N]).astype(np.float64)
 
-            det = np.linalg.det(A)
-            if det < 1e-8:
-                # Ensure the coefficient matrix is reasonably conditioned,
-                # since otherwise we would get numerical instabilities.
-                # Otherwise, due to the very small numbers on the diagonal,
-                # the matrix very quickly becomes almost singular.
-                A += np.eye(N)
+                if mode == BACKWARD_SUBSTITUTION:
+                    A = np.triu(A)
+                elif mode == FORWARD_SUBSTITUTION:
+                    A = np.tril(A)
+                else:
+                    raise ValueError()
 
-            x_gt = np.random.uniform(0.0, 1.0, N).astype(np.float64)
-            b = np.dot(A, x_gt)
+                det = np.linalg.det(A)
+                if det < 1e-8:
+                    # Ensure the coefficient matrix is reasonably conditioned,
+                    # since otherwise we would get numerical instabilities.
+                    # Otherwise, due to the very small numbers on the diagonal,
+                    # the matrix very quickly becomes almost singular.
+                    A += np.eye(N) * 1.0
 
-            x_est = solve_triang_subst(A, b, substitution=mode,
-                                       refine_result=refine_result)
-            # TODO report error and count, don't throw!
-            # Keep track of error norm!!
-            check(x_est, x_gt,
-                  "Mode {} custom triang iteration {}".format(mode, iteration))
+                x_gt = np.random.uniform(0.0, 1.0, N).astype(np.float64)
+                b = np.dot(A, x_gt)
+
+                x_est = solver(A, b)
+                # TODO report error and count, don't throw!
+                # Keep track of error norm!!
+                # check(x_est, x_gt,
+                #       "Mode {} custom triang iteration {}".format(mode, iteration))
+
+                if solver_name not in errors:
+                    errors[solver_name] = []
+                    sizes[solver_name] = []
+
+                error = np.linalg.norm(x_est - x_gt)
+                errors[solver_name].append(error)
+                sizes[solver_name].append((N, error))
+
+    data = list(errors.values())
+    plt.hist(data, 10, histtype='bar', label=list(solvers.keys()),
+             normed=True)
+    plt.legend()
+
+    # Plot results as a function of system size
+    fig, axes = plt.subplots(2, 2)
+    for row in range(2):
+        for col in range(2):
+            ax = axes[row, col]
+            idx = row * 2 + col
+            name = list(solvers.keys())[idx]
+
+            vals = sizes[name]
+            dx = [el[0] for el in vals]
+            dy = [el[1] for el in vals]
+            ax.scatter(dx, dy, 10, marker='x')
+            ax.set_ylim(1e-18, 1e18)
+            ax.set_yscale('log')
+            ax.set_title(name)
+
+    fig.tight_layout()
+    plt.show()
 
 
 if __name__ == '__main__':
