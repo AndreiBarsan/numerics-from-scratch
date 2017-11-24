@@ -107,10 +107,6 @@ def fuzz_test_solving():
                 b = np.dot(A, x_gt)
 
                 x_est = solver(A, b)
-                # TODO report error and count, don't throw!
-                # Keep track of error norm!!
-                # check(x_est, x_gt,
-                #       "Mode {} custom triang iteration {}".format(mode, iteration))
 
                 if solver_name not in errors:
                     errors[solver_name] = []
