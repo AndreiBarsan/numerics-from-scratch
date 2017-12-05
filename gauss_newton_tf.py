@@ -1,5 +1,18 @@
 """An implementation of the Gauss-Newton algorithm as a TensorFlow graph."""
 
+"""
+See: Learning to Segment Every Thing (NIPS 2017 FAIR Submission IIRC)
+    * There, the authors actually train a network to predict the weights of 
+    another "arm". They train the newtwork to use the bounding box 
+    classification weights to predict the weights of the mini mask FCN, 
+    such that the neural network can generalize to previously unseen classes.
+    * What if we did this for the optimization. Given, say, a k frame window, 
+    use the NN to predict an MLP or whatever that can optimize the pose of 
+    multiple consecutive frames.
+    Meh, this is, in a way, similar to just learning the weight matrix W 
+    which is applied at every step of the pipeline...
+"""
+
 import os
 
 import numpy as np
@@ -47,13 +60,17 @@ def gn_iteration(x, J, f, alpha, block_idx, loss_hist):
         # TODO(andrei): Wire each loss from each step as one histogram event,
         # so we should be able to visualize the loss curve as a distribution
         # over time (and verify it keeps having a negative slope).
-        tf.summary.scalar("gn-loss-{:02d}".format(block_idx), current_loss[0][0])
-
-        # TODO(andrei): Write this, then dump as histogram for TensorBoard.
-        # loss_hist[block_idx] = current_loss
 
         result = x - h * alpha
-        return result
+
+    # HMM, it seems we may just need to visualize this separately, i.e.,
+    # you could average the values per batch every, say 10--100 batches,
+    # and plot the mean loss as a fn of the iteration (WITH ERROR BARS!)
+    # separately using pyplot.
+    tf.summary.scalar("gn-loss/v-{:03d}".format(block_idx), current_loss[0][0])
+    loss_hist[block_idx] = current_loss
+
+    return result
 
 
 # TODO(andrei): Unify the NP and TF versions.
@@ -125,7 +142,7 @@ def gauss_newton(f, J, x0) -> OptimizationResult:
         # Some parameter we don't really care about
         lbd = tf.convert_to_tensor(2.0, tf.float32)
         cx = x0
-        n_steps = 20
+        n_steps = 10
 
         # print(x0)
         # print(f(x0, lbd))
@@ -136,12 +153,15 @@ def gauss_newton(f, J, x0) -> OptimizationResult:
             next_x = gn_iteration(cx, J(cx, lbd), f(cx, lbd), 1.0, i, loss_hist)
             cx = next_x
 
-        print("Loss hist is now:")
-        print(loss_hist)
+        # print("Loss hist is now:")
+        # print(loss_hist)
 
         # This node is the output of the optimization algorithm, which we may
         # want to feed into further computations or a loss function.
         final_x = cx
+
+        # TODO is this sane?
+        tf.summary.histogram("loss_over_time_2", [loss_hist])
 
         summary_op = tf.summary.merge_all()
         logdir = get_logdir(LOGDIR_BASE)

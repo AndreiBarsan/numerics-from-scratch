@@ -18,3 +18,4 @@ recordings/
 blender/
 __pycache__/
 out/
+dump/

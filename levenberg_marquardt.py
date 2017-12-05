@@ -163,7 +163,7 @@ def F(f, xx, N):
     return 1.0 / N * np.dot(f(xx).T, f(xx))
 
 
-def solve(A, b, naive=False):
+def solve(A, b, custom_solver):
     """Quick version which requires A to be PSD."""
     # Under the hood, this uses LAPACK's _gesv routine, which does not assume
     #  A is PSD even though, in our case, being the result of (J^T J), it is.
@@ -172,15 +172,14 @@ def solve(A, b, naive=False):
     # stuff up.
     # return np.linalg.solve(A, b)
 
-    print("(solve) >>> Performing Cholesky")
-
-    if naive:
+    if custom_solver:
         # This performs basically as good as the scipy solver.
         # x = np.linalg.inv(A) * b
-
         L = np.linalg.cholesky(A)
-        # Using this performs worse than 'cho_solve', but is still correct.
-        x = solve_triang_subst(A, b, substitution=FORWARD_SUBSTITUTION)
+        z = solve_triang_subst(L, b, substitution=FORWARD_SUBSTITUTION,
+                               refine_result=True)
+        x = solve_triang_subst(L.T, z, substitution=BACKWARD_SUBSTITUTION,
+                               refine_result=True)
         return x
     else:
         (c_res_dirty, is_lower) = scipy.linalg.cho_factor(A)
@@ -197,25 +196,22 @@ def levenberg_marquardt(f, J, x0, **kw):
         x0: The initial value of f's parameters, x.
 
     Keyword Args:
-        convergence_epsilong_g:
-        convergence_epsilong_h:
+        convergence_epsilon_g:
+        convergence_epsilon_h:
 
     Returns:
         x*: The value of the optimal parameters.
         steps: The number of steps taken to reach the optimum.
-        opt_result: The OptimizationResult computed by scipy on the same
-                    problem. Useful for comparing this implementation to a
-                    strong baseline.
         trace: A dictionary containing the values of F, g's l-infinity norm,
                and mu over time.
 
     References:
         [Madsen, 2004]: Madsen, Kaj, Hans Bruun Nielsen, and Ole Tingleff.
         "Methods for non-linear least squares problems." (2004).
-
     """
     convergence_epsilon_g = kw.get('convergence_epsilon_g', 1e-8)
     convergence_epsilon_h = kw.get('convergence_epsilon_h', 1e-8)
+    custom_solver = kw.get('custom_solver', False)
     tau = kw.get('tau', 1e-3)
     max_steps = 100
     verbose = kw.get('verbose', True)
@@ -254,7 +250,7 @@ def levenberg_marquardt(f, J, x0, **kw):
 
         # Solve for the optimal increment h
         I = np.eye(M)
-        h_lm = solve(A + mu * I, -g)
+        h_lm = solve(A + mu * I, -g, custom_solver)
 
         g_infty_norm = np.linalg.norm(g, np.inf)
         F_current = F(f, x, N)
@@ -299,7 +295,7 @@ def levenberg_marquardt(f, J, x0, **kw):
                 if found:
                     log("Converged!")
             else:
-                log("Poor update. Adjusting  mu and nu.")
+                log("Poor update. Adjusting mu and nu.")
                 # The update was too small or even increased f!
                 # In this case, we want to "shift" LM more towards the "coarser"
                 # gradient descent mode, which is done by increasing mu.
@@ -316,15 +312,7 @@ def levenberg_marquardt(f, J, x0, **kw):
     log("Final x:", x)
     log("Final optimal value: F = ", F(f, x, N))
 
-    log("Now doing the same thing with the built-in scipy LM implementation.")
-    opt_result = optimize.least_squares(f, x0, J, method='lm', verbose=1,
-                                        max_nfev=max_steps)
-    log("Scipy LM result:")
-    log("\t[Scipy] Solution found:", opt_result.x)
-    log("\t[Scipy] Final optimal value:", opt_result.cost)
-    # log(opt_result)
-
-    return x, step, opt_result, trace
+    return x, step, trace
 
 
 def plot_trace(f, J, x, model, scipy_opt_result, steps_taken, trace, **kw):
@@ -383,20 +371,32 @@ def plot_trace(f, J, x, model, scipy_opt_result, steps_taken, trace, **kw):
     plt.show()
 
 
+def scipy_lm(f, J, x0, **kw) -> optimize.OptimizeResult:
+    print("Now doing the same thing with the built-in scipy LM implementation.")
+    opt_result = optimize.least_squares(f, x0, J, method='lm', verbose=1, **kw)
+    print("Scipy LM result:")
+    print("\t[Scipy] Solution found:", opt_result.x)
+    print("\t[Scipy] Final optimal value:", opt_result.cost)
+    return opt_result
+
+
 def main():
-    # A very straightforward function to minimize
-    # f, J, name = modified_powell()
-    # A much trickier function to minimize
-    f, J, name = powell()
-    x0 = np.array([3, 1])
-    # Alternative values which also work well:
-    # convergence_epsilon_g = 1e-8
-    # convergence_epsilon_h = 1e-8
-    # tau = 1e-3
-    x_star, steps, opt_result, trace = levenberg_marquardt(
-        f, J, x0,
-        convergence_epsilon_g=1e-15, convergence_epsilon_h=1e-15, tau=1.0)
-    plot_trace(f, J, x_star, None, opt_result, steps, trace)
+    use_custom_cholesky = False
+    # # A very straightforward function to minimize
+    # # f, J, name = modified_powell()
+    # # A much trickier function to minimize
+    # f, J, name = powell()
+    # x0 = np.array([3, 1])
+    # # Alternative values which also work well:
+    # # convergence_epsilon_g = 1e-8
+    # # convergence_epsilon_h = 1e-8
+    # # tau = 1e-3
+    # x_star, steps, trace = levenberg_marquardt(
+    #     f, J, x0,
+    #     convergence_epsilon_g=1e-15, convergence_epsilon_h=1e-15, tau=1.0,
+    #     custom_solver=use_custom_cholesky)
+    # opt_result = scipy_lm(f, J, x0)
+    # plot_trace(f, J, x_star, None, opt_result, steps, trace)
 
     # A four-parameter residual function
     (f_fit, J_fit, name), x_gt = model_fitting_wrapper()
@@ -408,10 +408,13 @@ def main():
     # with scipy's.
     # x0 = np.array([-1.0, -1.0, 1.0, -1.0])
     # This initialization is recommended in the book and works well.
+    # Nonlinear optimization needs good initialization.
     x0 = np.array([-1.0, -2.0, 1.0, -1.0])
-    x_star, steps, opt_result, trace = levenberg_marquardt(
+    x_star, steps, trace = levenberg_marquardt(
         f_fit, J_fit, x0,
-        convergence_epsilon_g=1e-8, convergence_epsilon_h=1e-8, tau=1e-3)
+        convergence_epsilon_g=1e-8, convergence_epsilon_h=1e-8, tau=1e-3,
+        custom_solver=use_custom_cholesky)
+    opt_result = scipy_lm(f_fit, J_fit, x0)
     plot_trace(f_fit, J_fit, x_star, model_fitting_M, opt_result, steps, trace,
                ground_truth=x_gt)
 
