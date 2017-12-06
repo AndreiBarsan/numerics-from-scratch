@@ -72,7 +72,7 @@ class BALBundleAdjustmentProblem(BundleAdjustmentProblem):
         self.point_indices = point_indices
         self.points_2d = points_2d
 
-    def _load(self, data_fpath, max_frames=5):
+    def _load(self, data_fpath, max_frames=15):
         # TODO(andrei): Once you complete this, document it so you can share
         # it to other people who wish to test on subsets of BA!
         # Based on the code from: https://scipy-cookbook.readthedocs.io/items/bundle_adjustment.html
@@ -144,17 +144,16 @@ class BALBundleAdjustmentProblem(BundleAdjustmentProblem):
                     # point at least once!
                     print("Point idx {} NOT seen? WTF!!".format(point_idx))
 
+            # If we've not loaded all frames, then the references to some of the
+            # 3D points may be off in the original 'point_indices' list. Let us
+            # fix them to ensure BA can proceed correctly.
             print(len(point_3d_idx_map))
             for i in range(len(point_indices)):
                 if point_indices[i] in point_3d_idx_map:
-                    print("Adjust 3D point index in observation {}: {} -> {}".format(
-                        i, point_indices[i], point_3d_idx_map[point_indices[i]]
-                    ))
+                    # print("Adjust 3D point index in observation {}: {} -> {}".format(
+                    #     i, point_indices[i], point_3d_idx_map[point_indices[i]]
+                    # ))
                     point_indices[i] = point_3d_idx_map[point_indices[i]]
-
-
-            print(camera_params.shape)
-            print(max_frames)
 
             if max_frames != -1:
                 camera_params = camera_params[:max_frames,:]
