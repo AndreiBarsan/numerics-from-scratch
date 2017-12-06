@@ -36,6 +36,7 @@ def solve(problem: BALBundleAdjustmentProblem):
     n_cameras = problem.camera_params.shape[0]
     n_points = problem.points_3d.shape[0]
 
+    plot_results = False
 
     n = 9 * n_cameras + 3 * n_points
     m = 2 * problem.points_2d.shape[0]
@@ -69,8 +70,8 @@ def solve(problem: BALBundleAdjustmentProblem):
                             # Setting this but not 'jac' leads to finite
                             # differences being used to approximate the (
                             # sparse) Jacobian at every frame.
-                            jac_sparsity=A,
-                            # jac=jac,
+                            # jac_sparsity=A,
+                            jac=jac,
                             verbose=2,
                             # Scale the variables to equalize their influence on
                             # the cost function. Very important, since the camera
@@ -98,14 +99,15 @@ def solve(problem: BALBundleAdjustmentProblem):
     # plt.waitforbuttonpress()
     # plt.show()
 
-    res_struct = res.x[n_cameras * 9:].reshape(n_points, 3)
-    init_struct = x0_copy[n_cameras * 9:].reshape(n_points, 3)
-    deltas = np.linalg.norm(res_struct - init_struct, 2, axis=1).reshape(-1, 1)
+    if plot_results:
+        res_struct = res.x[n_cameras * 9:].reshape(n_points, 3)
+        init_struct = x0_copy[n_cameras * 9:].reshape(n_points, 3)
+        deltas = np.linalg.norm(res_struct - init_struct, 2, axis=1).reshape(-1, 1)
 
-    render_structure(x0_copy, n_cameras, n_points, "Initial structure")
-    render_structure(res.x, n_cameras, n_points, "Refined structure",
-                     deltas=deltas)
-    plt.show()
+        render_structure(x0_copy, n_cameras, n_points, "Initial structure")
+        render_structure(res.x, n_cameras, n_points, "Refined structure",
+                         deltas=deltas)
+        plt.show()
 
     return
 
@@ -163,27 +165,27 @@ def render_structure(x, n_cameras, n_points, title=None, **kw):
 
 # TODO(andrei): Maybe even animate the plot? Consider downsampling for speed.
 
-def rotate_mine(points, rot_vecs):
-    """Rotate the points by the given rotation vectors.
-
-    Uses Rogrigues's formula."""
-
-    # Make a column vector with the rotation angles of each rotation vector.
-    theta = np.linalg.norm(rot_vecs, axis=1)[:, np.newaxis]
-
-    # This is cool! I didn't know about this numpy feature.
-    with np.errstate(invalid='ignore'):
-        # Normalize and de-NaN-ify everything.
-        v = rot_vecs / theta
-        v = np.nan_to_num(v)
-
-    dot = np.sum(points * v, axis = 1)[:, np.newaxis]
-    cos_theta = np.cos(theta)
-    sin_theta = np.sin(theta)
-
-    return cos_theta * points + \
-           sin_theta * np.cross(v, points) + \
-           dot * (1 - cos_theta) * v
+# def rotate_mine(points, rot_vecs):
+#     """Rotate the points by the given rotation vectors.
+#
+#     Uses Rogrigues's formula."""
+#
+#     # Make a column vector with the rotation angles of each rotation vector.
+#     theta = np.linalg.norm(rot_vecs, axis=1)[:, np.newaxis]
+#
+#     # This is cool! I didn't know about this numpy feature.
+#     with np.errstate(invalid='ignore'):
+#         # Normalize and de-NaN-ify everything.
+#         v = rot_vecs / theta
+#         v = np.nan_to_num(v)
+#
+#     dot = np.sum(points * v, axis = 1)[:, np.newaxis]
+#     cos_theta = np.cos(theta)
+#     sin_theta = np.sin(theta)
+#
+#     return cos_theta * points + \
+#            sin_theta * np.cross(v, points) + \
+#            dot * (1 - cos_theta) * v
 
 
 def rotate(points, rot_vecs):
@@ -191,6 +193,9 @@ def rotate(points, rot_vecs):
 
     Rodrigues' rotation formula is used.
     """
+    # Make a column vector with the rotation angles of each rotation vector.
+    # axis = 1 => compute the operation for every row, so collapse the column
+    #  count.
     theta = np.linalg.norm(rot_vecs, axis=1)[:, np.newaxis]
     with np.errstate(invalid='ignore'):
         v = rot_vecs / theta
@@ -200,6 +205,12 @@ def rotate(points, rot_vecs):
     sin_theta = np.sin(theta)
 
     return cos_theta * points + sin_theta * np.cross(v, points) + dot * (1 - cos_theta) * v
+
+
+def get_P(points, camera_params):
+    points_rot = rotate(points, camera_params[:, :3])
+    points_trans = points_rot + camera_params[:, 3:6]
+    return points_trans
 
 
 def project(points, camera_params):
@@ -261,6 +272,9 @@ def jac_pproj(P):
     The function takes 3D points and outputs 2D points on the (metric) camera
     plane, so the Jacobian is 2x3.
 
+    TODO(andrei): Find clean way of making this able to operate on batches of
+    points.
+
     See Also:
         https://grail.cs.washington.edu/projects/bal/
 
@@ -294,65 +308,122 @@ def jac(params, n_cameras, n_points, camera_indices, point_indices, points_2d):
     n = n_cameras * 9 + n_points * 3
     A = lil_matrix((m, n), dtype=int)
 
-    # i = np.arange(camera_indices.size)
+    i = np.arange(camera_indices.size)
 
-    # TODO(andrei): Move all Jacobian computations to their own file.
+    camera_params = params[:n_cameras * 9].reshape((n_cameras, 9))
+    points_3d = params[n_cameras * 9:].reshape((n_points, 3))
+    points_proj = project(points_3d[point_indices], camera_params[camera_indices])
+    f = camera_params[:, 6]
+    # TODO(andrei): Use the dude's examples for how to do calculations on
+    # entire batches!
+
+    # P = np.array([1, 2, 3]).reshape((3, 1))
+    # Ps = np.array([
+    #     [1, 2, 3],
+    #     [1, 2, 3],
+    #     [1, 2, 3],
+    #     [1, 2, 3],
+    #     [1, 2, 3],
+    # ]).T.reshape((3, 5))
+    # print(P)
+    # print(Ps)
+    # print(jac_pproj(P).shape)
+    # print(jac_pproj(P))
+    # print(jac_pproj(Ps).shape)
+    # print(jac_pproj(Ps))
 
     # For every observation, i.e., every (camera, 3D point) pair.
-    for i in range(camera_indices.size):
-        # This used to be vectorized, but I simplified it while working out
-        # the correct jacobian.
-        # TODO(andrei): Re-vectorize.
+    # print("Estimating jacobian ({}) steps...".format(camera_indices.size))
+    # for i in range(camera_indices.size):
+    #     if (i+1) % 1000 == 0:
+    #         print("Step {}".format(i+1))
+    # If this operation is NOT vectorized, it can take about ONE MINUTE to
+    # compute the Jacobian for a single 5-frame problem...
 
-        # Deriv of i-th point's x wrt rotation component 1
-        A[2 * i, camera_indices * 9 + 0] = 0
-        # Deriv of i-th point's y wrt rotation component 1
-        A[2 * i + 1, camera_indices * 9 + 0] = 0
+    # We need these in pretty much all jacobian computations
+    # This is an (n_observations) x 3 array. That is, we compute the point P
+    # for every world point X, for every camera in which it is visible.
+    P = get_P(points_3d[point_indices], camera_params[camera_indices])
+    print("[jac] P.shape = {}".format(P.shape))
 
-        # Deriv wrt rotation component 2
-        A[2 * i, camera_indices * 9 + 1] = 0
-        A[2 * i + 1, camera_indices * 9 + 1] = 0
+    # Here be dragons!
+    Px = P[:, 0]
+    Px2 = Px * Px
+    Py = P[:, 1]
+    Py2 = Py * Py
+    Pz = P[:, 2]
+    Pz2 = Pz * Pz
 
-        # Deriv wrt rotation component 3
-        A[2 * i, camera_indices * 9 + 2] = 0
-        A[2 * i, camera_indices * 9 + 2] = 0
+    d_x_wrt_r1 = - (Px * Py / Pz2)
+    d_y_wrt_r1 = - 1 - Py2 / Pz2
 
-        # Deriv wrt translation component 1
-        A[2 * i, camera_indices * 9 + 3] = 0
-        A[2 * i, camera_indices * 9 + 3] = 0
+    d_x_wrt_r2 = 1 + Px2 / Pz2
+    d_y_wrt_r2 = Px * Py / Pz2
 
-        # Deriv wrt translation component 2
-        A[2 * i, camera_indices * 9 + 4] = 0
-        A[2 * i, camera_indices * 9 + 4] = 0
+    d_x_wrt_r3 = -Py / Pz
+    d_y_wrt_r3 = Px / Pz
 
-        # Deriv wrt translation component 3
-        A[2 * i, camera_indices * 9 + 5] = 0
-        A[2 * i, camera_indices * 9 + 5] = 0
+    d_x_wrt_t1 = -1.0 / Pz
+    d_y_wrt_t1 = 0.0
+    d_x_wrt_t2 = 0.0
+    d_y_wrt_t2 = -1.0 / Pz
+    d_x_wrt_t3 = Px / Pz2
+    d_y_wrt_t3 = Py / Pz2
 
-        # Deriv wrt focal length (extra thing over the CVPR '14 tutorial)
-        A[2 * i, camera_indices * 9 + 6] = 0
-        A[2 * i, camera_indices * 9 + 6] = 0
+    # Deriv of i-th point's x wrt rotation component 1
+    A[2 * i, camera_indices * 9 + 0] = f * d_x_wrt_r1
+    # Deriv of i-th point's y wrt rotation component 1
+    A[2 * i + 1, camera_indices * 9 + 0] = f * d_y_wrt_r1
 
-        # Deriv wrt first radial distortion param (ignored, for now)
-        A[2 * i, camera_indices * 9 + 7] = 0
-        A[2 * i, camera_indices * 9 + 7] = 0
+    # Deriv wrt rotation component 2
+    A[2 * i, camera_indices * 9 + 1] = f * d_x_wrt_r2
+    A[2 * i + 1, camera_indices * 9 + 1] = f * d_y_wrt_r2
 
-        # Deriv wrt second radial distortion param (ignored, for now)
-        A[2 * i, camera_indices * 9 + 8] = 0
-        A[2 * i, camera_indices * 9 + 8] = 0
+    # Deriv wrt rotation component 3
+    A[2 * i, camera_indices * 9 + 2] = f * d_x_wrt_r3
+    A[2 * i, camera_indices * 9 + 2] = f * d_y_wrt_r3
 
-        # TODO populate
-        # Deriv wrt point's 3D coord y
-        A[2 * i, n_cameras * 9 + point_indices * 3 + 0] = 1
-        A[2 * i + 1, n_cameras * 9 + point_indices * 3 + 0] = 1
+    # Deriv wrt translation component 1
+    A[2 * i, camera_indices * 9 + 3] = f * d_x_wrt_t1
+    A[2 * i, camera_indices * 9 + 3] = f * d_y_wrt_t1
 
-        # Deriv wrt point's 3D coord y
-        A[2 * i, n_cameras * 9 + point_indices * 3 + 1] = 1
-        A[2 * i + 1, n_cameras * 9 + point_indices * 3 + 1] = 1
+    # Deriv wrt translation component 2
+    A[2 * i, camera_indices * 9 + 4] = f * d_x_wrt_t2
+    A[2 * i, camera_indices * 9 + 4] = f * d_y_wrt_t2
 
-        # Deriv wrt point's 3D coord z
-        A[2 * i, n_cameras * 9 + point_indices * 3 + 2] = 1
-        A[2 * i + 1, n_cameras * 9 + point_indices * 3 + 2] = 1
+    # Deriv wrt translation component 3
+    A[2 * i, camera_indices * 9 + 5] = f * d_x_wrt_t3
+    A[2 * i, camera_indices * 9 + 5] = f * d_y_wrt_t3
+
+    # Deriv wrt focal length (extra thing over the CVPR '14 tutorial)
+    A[2 * i, camera_indices * 9 + 6] = 0
+    A[2 * i, camera_indices * 9 + 6] = 0
+
+    # Deriv wrt first radial distortion param (ignored, for now)
+    A[2 * i, camera_indices * 9 + 7] = 0
+    A[2 * i, camera_indices * 9 + 7] = 0
+
+    # Deriv wrt second radial distortion param (ignored, for now)
+    A[2 * i, camera_indices * 9 + 8] = 0
+    A[2 * i, camera_indices * 9 + 8] = 0
+
+    # TODO(andrei): See if stacking together all projection jacobians as a
+    # (n_obs) x 2 x 3 tensor is possible.
+
+    # Construct a rotation matrix for each axis-angle representation
+    R = rodrigues(camera_params[:, 0:3])
+
+    # Deriv wrt point's 3D coord y
+    A[2 * i, n_cameras * 9 + point_indices * 3 + 0] = 1
+    A[2 * i + 1, n_cameras * 9 + point_indices * 3 + 0] = 1
+
+    # Deriv wrt point's 3D coord y
+    A[2 * i, n_cameras * 9 + point_indices * 3 + 1] = 1
+    A[2 * i + 1, n_cameras * 9 + point_indices * 3 + 1] = 1
+
+    # Deriv wrt point's 3D coord z
+    A[2 * i, n_cameras * 9 + point_indices * 3 + 2] = 1
+    A[2 * i + 1, n_cameras * 9 + point_indices * 3 + 2] = 1
 
     return A
 
