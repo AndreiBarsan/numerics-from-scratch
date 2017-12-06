@@ -106,21 +106,20 @@ class JacobianAssertionError(AssertionError):
 # Helpers for numpy testing
 
 class NumpyTestCase(unittest.TestCase):
-    def assertShape(self, arr, expected_shape):
-        self.assertEqual(shape(arr), expected_shape)
+    def assertShape(self, arr, expected_shape, **kw):
+        self.assertEqual(shape(arr), expected_shape, **kw)
 
-
-    # Check that two arrays are equal (up to machine precision)
-    def assertArrayEqual(self, A, B):
+    def assertArrayEqual(self, A, B, **kw):
+        """Check that two arrays are equal (up to machine precision)"""
         A = asarray(A)
         B = asarray(B)
-        self.assertEqual(A.shape, B.shape)
+        self.assertEqual(A.shape, B.shape, **kw)
         err = np.sum(square(A-B))
         if err > 1e-7:
             raise ArrayEqualAssertionError(A, B)
 
-    # Assert that two arrays are equal up to a constant: A = k*B, for some k
     def assertArrayProportional(self, A, B):
+        """Assert that two arrays are equal up to a constant: A = k*B, for some k"""
         self.assertArrayEqual(A * sum(B), B * sum(A))
 
     # Check that two functions are equal (up to machine precision)
