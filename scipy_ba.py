@@ -19,6 +19,7 @@ import matplotlib
 from mpl_toolkits.mplot3d import Axes3D
 
 from algebra import skew
+from bundle_adjustment_result import BundleAdjustmentResult
 from lie import SO3, rotate
 
 matplotlib.rc('font', size='8')
@@ -43,7 +44,7 @@ class TransformMode(Enum):
 
 # TODO(andrei): Refactor classes so that this works with a generic
 # 'BundleAdjustmentProblem' instance.
-def solve(problem: BALBundleAdjustmentProblem, **kw):
+def solve(problem: BALBundleAdjustmentProblem, **kw) -> BundleAdjustmentResult:
     n_cameras = problem.camera_params.shape[0]
     n_points = problem.points_3d.shape[0]
 
@@ -75,6 +76,7 @@ def solve(problem: BALBundleAdjustmentProblem, **kw):
     plot_results = kw.get('plot_results', True)
     analytic_jacobian = kw.get('analytic_jacobian', False)
     transform_mode = kw.get('transform_mode', TransformMode.CANONICAL)
+    # TODO(andrei): Error when leftover kwargs.
 
     n = 9 * n_cameras + 3 * n_points
     m = 2 * problem.points_2d.shape[0]
@@ -99,7 +101,7 @@ def solve(problem: BALBundleAdjustmentProblem, **kw):
         # parameters and the 3D points are very different
         # entities.
         'x_scale': 'jac',
-        # 'max_nfev': 50,        # Strict but quick
+        'max_nfev': 30,        # Strict but quick
         'ftol': 1e-4,
         'method': 'trf',
         # loss='soft_l1', # seems to work way better than huber/cauchy for BA
@@ -152,7 +154,8 @@ def solve(problem: BALBundleAdjustmentProblem, **kw):
                          deltas=deltas)
         plt.show()
 
-    return
+    ba_result = BundleAdjustmentResult(res.cost)
+    return ba_result
 
 
 def render_structure(x, n_cameras, n_points, title=None, **kw):
@@ -265,7 +268,8 @@ def project(points, camera_params, transform_mode):
 
     # First LB dataset, no radial: converges more slowly, but does eventually
     # converge to cost ~ 15000, which is decent.
-    # r = 1
+    # TODO(andrei): Proper flag to toggle this!
+    r = 1
 
     points_proj *= (r * f)[:, np.newaxis]
     return points_proj
@@ -690,8 +694,8 @@ def ba_sparsity(n_cameras, n_points, camera_indices, point_indices):
     # TODO: when testing do tests for extrinsic only, ext+f, and ext+f+k1+k2 !!!
 
     i = np.arange(camera_indices.size)
-    for s in range(9):
-    # for s in range(7):      # Use f, but not radial dist. params
+    # for s in range(9):
+    for s in range(7):      # Use f, but not radial dist. params
     # for s in range(6):  # Ignore f and radial distortion params.
         # For every point, the part. deriv of the i-th observation's x,
         # w.r.t. the 9 camera parameters.

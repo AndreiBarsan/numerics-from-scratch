@@ -37,10 +37,10 @@ class BundleAdjustmentProblem(Problem):
 
 
 class BALBundleAdjustmentProblem(BundleAdjustmentProblem):
-    def __init__(self, name, data_fpath):
+    def __init__(self, name, data_fpath, load_params):
         BundleAdjustmentProblem.__init__(self, name)
         self.data_fpath = data_fpath
-        self._load(self.data_fpath)
+        self._load(self.data_fpath, **load_params)
 
     def _load_vanilla(self, data_fpath):
         with open(data_fpath, "rt") as file:
