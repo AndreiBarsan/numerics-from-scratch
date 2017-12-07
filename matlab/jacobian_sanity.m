@@ -32,6 +32,7 @@ vrrotvec2mat([1, 0, 0, 1]')
 vrrotvec2mat([0, 1, 0, 1]')
 vrrotvec2mat([0, 0, 1, 1]')
 
+% Generate test data for the Python code
 test_twists = zeros(10, 3);
 test_matrices = zeros(10, 3, 3);
 for i = 1:1000

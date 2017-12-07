@@ -4,6 +4,8 @@ import bz2
 
 import numpy as np
 
+from lie import rotate
+
 
 class Problem(object):
     # Should specify some problem like a toy function, a toy-but-ugly-function
@@ -72,7 +74,19 @@ class BALBundleAdjustmentProblem(BundleAdjustmentProblem):
         self.point_indices = point_indices
         self.points_2d = points_2d
 
-    def _load(self, data_fpath, max_frames=5):
+    def _load(self, data_fpath, max_frames=-1, canonical_rots=True):
+        """Loads the specified dataset, setting the appropriate fields.
+
+        Args:
+            data_fpath:     Path to dataset file. Can be .txt or .bz2.
+            max_frames:     The number of dataset frames to load. Use -1 to
+                            disable the limit.
+            canonical_rots: Whether to convert the rotations and translations to
+                            a canonical representation. That is:
+                                t <- -R^T * t
+                                R <- R^T
+        """
+
         # TODO(andrei): Once you complete this, document it so you can share
         # it to other people who wish to test on subsets of BA!
         # Based on the code from: https://scipy-cookbook.readthedocs.io/items/bundle_adjustment.html
@@ -109,6 +123,23 @@ class BALBundleAdjustmentProblem(BundleAdjustmentProblem):
             for i in range(n_cameras * 9):
                 camera_params[i] = float(file.readline())
             camera_params = camera_params.reshape((n_cameras, -1))
+
+            if canonical_rots:
+                print("Making camera rotations canonical!")
+                for i in range(n_cameras):
+                    # R <- R'
+                    camera_params[i, 0:3] *= -1
+                    # t <- -R' * t
+                    print("Rot")
+                    print(camera_params[i, 3:6, np.newaxis])
+                    print(camera_params[i, 3:6, np.newaxis].shape)
+                    print("Trans")
+                    print(camera_params[i, 0:3, np.newaxis])
+                    print(camera_params[i, 0:3, np.newaxis].shape)
+
+                    camera_params[i, 3:6] = -1 * rotate(camera_params[i, 3:6, np.newaxis].T, # point
+                                                        camera_params[i, 0:3, np.newaxis].T) # rot
+                print("Finished adjusting camera rotations.")
 
             n_real_points = len(seen_point_indexes)
             points_3d = np.empty(n_real_points * 3)

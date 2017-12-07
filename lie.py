@@ -36,3 +36,23 @@ class SO3(object):
         return skew(x)
 
 
+def rotate(points, rot_vecs):
+    """Rotate points by given rotation vectors.
+
+    The Rodrigues rotation formula is used.
+    """
+    # Make a column vector with the rotation angles of each rotation vector.
+    # axis = 1 => compute the operation for every row, so collapse the column
+    #  count.
+    theta = np.linalg.norm(rot_vecs, axis=1)[:, np.newaxis]
+    with np.errstate(invalid='ignore'):
+        v = rot_vecs / theta
+        v = np.nan_to_num(v)
+    dot = np.sum(points * v, axis=1)[:, np.newaxis]
+    cos_theta = np.cos(theta)
+    sin_theta = np.sin(theta)
+
+    # TODO(andrei): Test if doing this is the same as computing the rotation
+    # matrix and multiplying by it!!!
+
+    return cos_theta * points + sin_theta * np.cross(v, points) + dot * (1 - cos_theta) * v

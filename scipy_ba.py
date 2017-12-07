@@ -7,18 +7,20 @@ https://scipy-cookbook.readthedocs.io/items/bundle_adjustment.html
 
 # TODO(andrei): Are built-in solvers using the Schur complement available?
 
-import random
-import time
 import os
 import pickle
-
-import numdifftools as nd
-
-from algebra import skew
-from lie import SO3
+import time
+from enum import Enum
 
 # Configure matplotlib before loading the plotting component.
 import matplotlib
+
+# Needed even if unused!
+from mpl_toolkits.mplot3d import Axes3D
+
+from algebra import skew
+from lie import SO3, rotate
+
 matplotlib.rc('font', size='8')
 # This seems the least slow way of visualizing stuff in 3D. The mayavi library
 # may be better, but it requires a local build of VTK with Python 3 support.
@@ -29,9 +31,14 @@ import numpy as np
 from scipy.sparse import lil_matrix
 import scipy.optimize as sopt
 
-from mpl_toolkits.mplot3d import Axes3D
+from problem import BALBundleAdjustmentProblem
 
-from problem import BundleAdjustmentProblem, BALBundleAdjustmentProblem
+
+class TransformMode(Enum):
+    # P = RX + t
+    BAL = 1
+    # P = R'(X - t)
+    CANONICAL = 2
 
 
 # TODO(andrei): Refactor classes so that this works with a generic
@@ -40,6 +47,7 @@ def solve(problem: BALBundleAdjustmentProblem, **kw):
     n_cameras = problem.camera_params.shape[0]
     n_points = problem.points_3d.shape[0]
 
+    # Results from December 6
     # 5 frames, f but no k, anal: 4.7e+02   (negative skew in deriv)
     # 5 frames, f but no k, anal: 3.3e+04   (positive skew in deriv)
     # 5 frames, f but no k, num:  4.7e+02
@@ -55,8 +63,18 @@ def solve(problem: BALBundleAdjustmentProblem, **kw):
     # 15 frames, f but no k, num:  2.73e+03
     # Conclusion => definitely still bugs
 
+    # Results from December 7
+    # 49 frames, f but no k, num, reparam: 1.505e+04
+    # 49 frames, f but no k, num:          1.501e+04
+    #
+    # 49 frames, ceres, anal:   1.33e+04
+    # 49 frames, num:           1.34e+04
+    # 49 frames, cookbook, num: 1.34e+04
+    # 49 frames, num, reparam:  1.34e+04 => looks like reparameterization is OK
+
     plot_results = kw.get('plot_results', True)
     analytic_jacobian = kw.get('analytic_jacobian', False)
+    transform_mode = kw.get('transform_mode', TransformMode.CANONICAL)
 
     n = 9 * n_cameras + 3 * n_points
     m = 2 * problem.points_2d.shape[0]
@@ -69,7 +87,7 @@ def solve(problem: BALBundleAdjustmentProblem, **kw):
     x0 = np.hstack((problem.camera_params.ravel(), problem.points_3d.ravel()))
     x0_copy = np.copy(x0)
     f0 = fun(x0, n_cameras, n_points, problem.camera_indices,
-             problem.point_indices, problem.points_2d)
+             problem.point_indices, problem.points_2d, transform_mode)
 
     # plt.ion()
     # plt.plot(f0)
@@ -89,7 +107,7 @@ def solve(problem: BALBundleAdjustmentProblem, **kw):
         # slower (gets 7300 on the first ladybug dataset,
         # as opposed to 11300 with the linear loss).
         'args': (n_cameras, n_points, problem.camera_indices,
-                 problem.point_indices, problem.points_2d),
+                 problem.point_indices, problem.points_2d, transform_mode),
     }
     if analytic_jacobian:
         optimization_kwargs['jac'] = jac_clean
@@ -189,37 +207,33 @@ def render_structure(x, n_cameras, n_points, title=None, **kw):
     cams_rot = cams[:, 0:3]
     cams_pos = cams[:, 3:6]
 
+    # From the docs:
+    #   - R' * [0 0 -1]' = a camera's viewing dir
+    #   - -R' * t        = a camera's position
+
+    neg_zs = np.zeros_like(cams_pos)
+    neg_zs[:, 2] = -1
+
+    cams_3d_pos = rotate(cams_pos, cams_rot)
+    cams_3d_dir = rotate(neg_zs, cams_rot)
+
     # Very naive rendering of cameras
     # TODO(andrei): Ensure they get rendered right. Looks a bit funny right now.
     # TODO(andrei): Also show camera orientation and quantify the change in
     # their pose undergone after BA.
-    ax.scatter(cams_pos[:, 0],
-               cams_pos[:, 2],
-               cams_pos[:, 1],
-               s=5.0,
+    ax.scatter(cams_3d_pos[:, 0],
+               cams_3d_pos[:, 2],
+               cams_3d_pos[:, 1],
+               s=0.5,
                c=np.linspace(0.0, 10.0, cams_pos.shape[0]),
                marker='o')
-
-def rotate(points, rot_vecs):
-    """Rotate points by given rotation vectors.
-
-    The Rodrigues rotation formula is used.
-    """
-    # Make a column vector with the rotation angles of each rotation vector.
-    # axis = 1 => compute the operation for every row, so collapse the column
-    #  count.
-    theta = np.linalg.norm(rot_vecs, axis=1)[:, np.newaxis]
-    with np.errstate(invalid='ignore'):
-        v = rot_vecs / theta
-        v = np.nan_to_num(v)
-    dot = np.sum(points * v, axis=1)[:, np.newaxis]
-    cos_theta = np.cos(theta)
-    sin_theta = np.sin(theta)
-
-    # TODO(andrei): Test if doing this is the same as computing the rotation
-    # matrix and multiplying by it!!!
-
-    return cos_theta * points + sin_theta * np.cross(v, points) + dot * (1 - cos_theta) * v
+    ax.quiver(cams_3d_pos[:, 0],
+              cams_3d_pos[:, 2],
+              cams_3d_pos[:, 1],
+              cams_3d_dir[:, 0],
+              cams_3d_dir[:, 2],
+              cams_3d_dir[:, 1],
+              length=0.5)
 
 
 def get_P(points, camera_params):
@@ -228,10 +242,16 @@ def get_P(points, camera_params):
     return points_trans
 
 
-def project(points, camera_params):
+def project(points, camera_params, transform_mode):
     """Project n 3D points to 2D."""
-    points_proj = rotate(points, camera_params[:, :3])
-    points_proj += camera_params[:, 3:6]
+    if transform_mode == TransformMode.BAL:
+        points_proj = rotate(points, camera_params[:, :3])
+        points_proj += camera_params[:, 3:6]
+    else:
+        # P = R' * (X - t)
+        points_off = points - camera_params[:, 3:6]
+        points_proj = rotate(points_off, -camera_params[:, :3])
+
     points_proj = -points_proj[:, 0:2] / points_proj[:, 2, np.newaxis]
 
     f = camera_params[:, 6]
@@ -245,13 +265,13 @@ def project(points, camera_params):
 
     # First LB dataset, no radial: converges more slowly, but does eventually
     # converge to cost ~ 15000, which is decent.
-    r = 1
+    # r = 1
 
     points_proj *= (r * f)[:, np.newaxis]
     return points_proj
 
 
-def fun(params, n_cameras, n_points, camera_indices, point_indices, points_2d, check=None):
+def fun(params, n_cameras, n_points, camera_indices, point_indices, points_2d, transform_mode, check=None):
     """Compute the residuals for each observation.
 
     Note that every 2D point produces two residuals.
@@ -265,7 +285,7 @@ def fun(params, n_cameras, n_points, camera_indices, point_indices, points_2d, c
     """
     camera_params = params[:n_cameras * 9].reshape((n_cameras, 9))
     points_3d = params[n_cameras * 9:].reshape((n_points, 3))
-    points_proj = project(points_3d[point_indices], camera_params[camera_indices])
+    points_proj = project(points_3d[point_indices], camera_params[camera_indices], transform_mode)
 
     residuals = (points_proj - points_2d).ravel()
 
@@ -309,7 +329,7 @@ def jac_pproj(P):
     ])
 
 
-def jac_clean(params, n_cameras, n_points, camera_indices, point_indices, points_2d, check=True):
+def jac_clean(params, n_cameras, n_points, camera_indices, point_indices, points_2d, transform_mode, check=True):
     m = camera_indices.size * 2
     n = n_cameras * 9 + n_points * 3
     A = lil_matrix((m, n), dtype=int)
@@ -318,7 +338,7 @@ def jac_clean(params, n_cameras, n_points, camera_indices, point_indices, points
 
     camera_params = params[:n_cameras * 9].reshape((n_cameras, 9))
     points_3d = params[n_cameras * 9:].reshape((n_points, 3))
-    points_proj = project(points_3d[point_indices], camera_params[camera_indices])
+    points_proj = project(points_3d[point_indices], camera_params[camera_indices], transform_mode)
 
     # Even for two frames the jacobian is 3400x4000, so 1.2M parameters...
     # Yes, mostly empty, but still...
@@ -393,7 +413,6 @@ def jac_clean(params, n_cameras, n_points, camera_indices, point_indices, points
     if check:
         print("Performing gradient check:")
         # TODO(andrei): If this doesn't work, use numdifftools!
-        from finite_differences import numeric_jacobian
         # Note: scipy does not support jacobian checking; we should use the
         # functionality from the pysfm project (finite_differences.py)
         # gradient_err = sopt.check_grad(fun, jac_clean, params,
@@ -671,8 +690,8 @@ def ba_sparsity(n_cameras, n_points, camera_indices, point_indices):
     # TODO: when testing do tests for extrinsic only, ext+f, and ext+f+k1+k2 !!!
 
     i = np.arange(camera_indices.size)
-    # for s in range(9):
-    for s in range(7):      # Use f, but not radial dist. params
+    for s in range(9):
+    # for s in range(7):      # Use f, but not radial dist. params
     # for s in range(6):  # Ignore f and radial distortion params.
         # For every point, the part. deriv of the i-th observation's x,
         # w.r.t. the 9 camera parameters.
