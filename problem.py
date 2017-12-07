@@ -72,7 +72,7 @@ class BALBundleAdjustmentProblem(BundleAdjustmentProblem):
         self.point_indices = point_indices
         self.points_2d = points_2d
 
-    def _load(self, data_fpath, max_frames=15):
+    def _load(self, data_fpath, max_frames=5):
         # TODO(andrei): Once you complete this, document it so you can share
         # it to other people who wish to test on subsets of BA!
         # Based on the code from: https://scipy-cookbook.readthedocs.io/items/bundle_adjustment.html

@@ -1,23 +1,25 @@
 """Very simple Bundle Adjuster using a scipy solver.
 
-Heavily based on the BA code from the SciPy Cookbook:
+Based on the BA code from the SciPy Cookbook (apart from the analytic Jacobian
+formula):
 https://scipy-cookbook.readthedocs.io/items/bundle_adjustment.html
 """
 
-# TODO(andrei): Are solvers using the Schur complement available?
-# TODO(andrei): Are solvers using sparse methods available?
+# TODO(andrei): Are built-in solvers using the Schur complement available?
 
 import random
 import time
 import os
 import pickle
 
-import matplotlib
-from matplotlib import cm
+import numdifftools as nd
 
 from algebra import skew
 from lie import SO3
 
+# Configure matplotlib before loading the plotting component.
+import matplotlib
+matplotlib.rc('font', size='8')
 # This seems the least slow way of visualizing stuff in 3D. The mayavi library
 # may be better, but it requires a local build of VTK with Python 3 support.
 matplotlib.use('Qt5Agg')
@@ -25,7 +27,7 @@ matplotlib.use('Qt5Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.sparse import lil_matrix
-from scipy.optimize import least_squares
+import scipy.optimize as sopt
 
 from mpl_toolkits.mplot3d import Axes3D
 
@@ -35,11 +37,6 @@ from problem import BundleAdjustmentProblem, BALBundleAdjustmentProblem
 # TODO(andrei): Refactor classes so that this works with a generic
 # 'BundleAdjustmentProblem' instance.
 def solve(problem: BALBundleAdjustmentProblem, **kw):
-    """
-    Warning: estimates Jacobians using finite differences!
-
-    The `*_indices` arrays determine which points go with which cameras.
-    """
     n_cameras = problem.camera_params.shape[0]
     n_points = problem.points_3d.shape[0]
 
@@ -115,7 +112,7 @@ def solve(problem: BALBundleAdjustmentProblem, **kw):
             res = pickle.load(f)
     else:
         t0 = time.time()
-        res = least_squares(fun, x0, **optimization_kwargs)
+        res = sopt.least_squares(fun, x0, **optimization_kwargs)
         t1 = time.time()
         print("Delta time = {:2f}s".format(t1 - t0))
         print("Saving numpy dump.")
@@ -133,7 +130,7 @@ def solve(problem: BALBundleAdjustmentProblem, **kw):
         deltas = np.linalg.norm(res_struct - init_struct, 2, axis=1).reshape(-1, 1)
 
         render_structure(x0_copy, n_cameras, n_points, "Initial structure")
-        render_structure(res.x, n_cameras, n_points, "Refined structure (colors reflect degree to which a particular point was adjusted)",
+        render_structure(res.x, n_cameras, n_points, "Refined structure\n(colors reflect the degree to which\na particular point was adjusted)",
                          deltas=deltas)
         plt.show()
 
@@ -254,7 +251,7 @@ def project(points, camera_params):
     return points_proj
 
 
-def fun(params, n_cameras, n_points, camera_indices, point_indices, points_2d):
+def fun(params, n_cameras, n_points, camera_indices, point_indices, points_2d, check=None):
     """Compute the residuals for each observation.
 
     Note that every 2D point produces two residuals.
@@ -262,6 +259,7 @@ def fun(params, n_cameras, n_points, camera_indices, point_indices, points_2d):
     Args:
         params: Camera parameters and 3D coordinates, i.e., the stuff we wish to
                 optimize the 2D positions of the points are fixed.
+        check: Only used by the Jacobian computation.
 
     Returns:
     """
@@ -269,8 +267,6 @@ def fun(params, n_cameras, n_points, camera_indices, point_indices, points_2d):
     points_3d = params[n_cameras * 9:].reshape((n_points, 3))
     points_proj = project(points_3d[point_indices], camera_params[camera_indices])
 
-    # TODO(andrei): Compute the Jacobian of this function insted of relying
-    # on finite differences.
     residuals = (points_proj - points_2d).ravel()
 
     # TODO(andrei): Treat this like a hook.
@@ -313,7 +309,7 @@ def jac_pproj(P):
     ])
 
 
-def jac_clean(params, n_cameras, n_points, camera_indices, point_indices, points_2d):
+def jac_clean(params, n_cameras, n_points, camera_indices, point_indices, points_2d, check=True):
     m = camera_indices.size * 2
     n = n_cameras * 9 + n_points * 3
     A = lil_matrix((m, n), dtype=int)
@@ -336,13 +332,13 @@ def jac_clean(params, n_cameras, n_points, camera_indices, point_indices, points
     print("[jac] Ps.shape = {}".format(Ps.shape))
     Ps_projected = - Ps[:, 0:2] / Ps[:, 2, np.newaxis]
 
-    # NOTE: Using lil_matrices special care has to be taken to not incur huge insertion costs.
+    # NOTE: When using lil_matrices special care has to be taken to not incur
+    # huge insertion costs.
     cam_param_count = 9
     for p_idx in range(points_proj_count):
         f = camera_params[camera_indices[p_idx], 6]
 
         x_idx = p_idx * 2
-        y_idx = p_idx * 2 + 1
         cam_idx = camera_indices[p_idx]
         point_3d_idx = point_indices[p_idx]
 
@@ -353,77 +349,57 @@ def jac_clean(params, n_cameras, n_points, camera_indices, point_indices, points
         P = Ps[p_idx]
 
         J_proj_wrt_P                = jac_pproj(P)
-        J_transform_wrt_twist       = np.hstack((+skew(P), np.eye(3)))
+        J_transform_wrt_twist       = np.hstack((-skew(P), np.eye(3)))
         J_transform_wrt_delta_3d    = R
 
+        # Jacobian wrt the extrinsic camera params
         h1 = f * np.dot(J_proj_wrt_P, J_transform_wrt_twist)
+        # Deriv wrt point's 3D coord x
         h2 = f * np.dot(J_proj_wrt_P, J_transform_wrt_delta_3d)
+        # Jacobian wrt the intrinsic camera param(s)
         h3 = Ps_projected[p_idx, :, np.newaxis]
         assert h1.shape == (2, 6)
         assert h2.shape == (2, 3)
         assert h3.shape == (2, 1)
 
-        # TODO(andrei): Print sparsity map of Jacobian as a sanity check!!
+        cam_off = cam_idx * cam_param_count
+        J[x_idx:x_idx+2, cam_off:cam_off+6] = h1
+        J[x_idx:x_idx+2, cam_off+6] = h3
 
-        # rot 1
-        J[x_idx, cam_idx * cam_param_count + 0] = h1[0, 0]
-        J[y_idx, cam_idx * cam_param_count + 0] = h1[1, 0]
-        # rot 2
-        J[x_idx, cam_idx * cam_param_count + 1] = h1[0, 1]
-        J[y_idx, cam_idx * cam_param_count + 1] = h1[1, 1]
-        # rot 3
-        J[x_idx, cam_idx * cam_param_count + 2] = h1[0, 2]
-        J[y_idx, cam_idx * cam_param_count + 2] = h1[1, 2]
-        # trans 1
-        J[x_idx, cam_idx * cam_param_count + 3] = h1[0, 3]
-        J[y_idx, cam_idx * cam_param_count + 3] = h1[1, 3]
-        # trans 2
-        J[x_idx, cam_idx * cam_param_count + 4] = h1[0, 4]
-        J[y_idx, cam_idx * cam_param_count + 4] = h1[1, 4]
-        # trans 3
-        J[x_idx, cam_idx * cam_param_count + 5] = h1[0, 5]
-        J[y_idx, cam_idx * cam_param_count + 5] = h1[1, 5]
-        # f
-        J[x_idx, cam_idx * cam_param_count + 6] = h3[0, 0]
-        J[y_idx, cam_idx * cam_param_count + 6] = h3[1, 0]
-
-        # Deriv wrt point's 3D coord x
-        off = n_cameras * cam_param_count + point_3d_idx * 3
+        point_3d_off = n_cameras * cam_param_count + point_3d_idx * 3
         # print(J[x_idx:x_idx+2, off:off+3].shape)
-        J[x_idx:x_idx+2, off:off+3] = h2
-        # J[y_idx, n_cameras * cam_param_count + point_3d_idx * 3 + 0] = h2[1, 0]
-
-        # Deriv wrt point's 3D coord y
-        # J[x_idx, n_cameras * cam_param_count + point_3d_idx * 3 + 1] = h2[0, 1]
-        # J[y_idx, n_cameras * cam_param_count + point_3d_idx * 3 + 1] = h2[1, 1]
-
-        # Deriv wrt point's 3D coord z
-        # J[x_idx, n_cameras * cam_param_count + point_3d_idx * 3 + 2] = h2[0, 2]
-        # J[y_idx, n_cameras * cam_param_count + point_3d_idx * 3 + 2] = h2[1, 2]
+        J[x_idx:x_idx+2, point_3d_off:point_3d_off+3] = h2
 
     end_t = time.time()
     delta_t_s = end_t - start_t
     print("[jac] Finished computing Jacobian after {} steps, in {:2f}.".format(
         points_proj_count, delta_t_s))
 
-    # stats = [np.min, np.max, np.median, np.std]
-    # for ss in stats:
-    #     print("{}(J) = {:.4f}".format(ss.__name__, ss(J, axis=None)))
     J_csr = J.tocsr()
     min_val = J_csr.min()
     max_val = J_csr.max()
-    mean_val = J_csr.mean()
     val_range = max_val - min_val
     # print("J.min = {:.4f}".format(J.data.min()))
     # print("J.max = {:.4f}".format(J.data.max()))
 
-    # plt.spy(J)
+    # # plt.spy(J)
     # denseJ = J_csr.todense()
-    # denseJ[J_csr.nonzero()] = 50
+    # # denseJ[J_csr.nonzero()] = 50
     # denseJ[denseJ != 0.0] = 100
     # plot = plt.imshow(denseJ, cmap=cm.viridis)
     # plt.colorbar(plot)
     # plt.show()
+
+    if check:
+        print("Performing gradient check:")
+        # TODO(andrei): If this doesn't work, use numdifftools!
+        from finite_differences import numeric_jacobian
+        # Note: scipy does not support jacobian checking; we should use the
+        # functionality from the pysfm project (finite_differences.py)
+        # gradient_err = sopt.check_grad(fun, jac_clean, params,
+        #     n_cameras, n_points, camera_indices, point_indices, points_2d, False
+        # )
+        # print("Estimated gradient error:", gradient_err)
 
     return J_csr
 
