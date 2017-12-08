@@ -4,23 +4,19 @@ Based on the BA code from the SciPy Cookbook (apart from the analytic Jacobian
 formula):
 https://scipy-cookbook.readthedocs.io/items/bundle_adjustment.html
 """
-
 # TODO(andrei): Are built-in solvers using the Schur complement available?
 
+from enum import Enum
+import logging
 import os
 import pickle
 import time
-from enum import Enum
 
 # Configure matplotlib before loading the plotting component.
 import matplotlib
 
 # Needed even if unused!
 from mpl_toolkits.mplot3d import Axes3D
-
-from algebra import skew
-from bundle_adjustment_result import BundleAdjustmentResult
-from lie import SO3, rotate
 
 matplotlib.rc('font', size='8')
 # This seems the least slow way of visualizing stuff in 3D. The mayavi library
@@ -29,13 +25,21 @@ matplotlib.use('Qt5Agg')
 
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.sparse import lil_matrix
+from scipy.sparse import lil_matrix, csr_matrix
 import scipy.optimize as sopt
 
+from algebra import skew
+from bundle_adjustment_result import BundleAdjustmentResult
+from finite_differences import *
+from lie import SO3, rotate
 from problem import BALBundleAdjustmentProblem
 
 
+logging.basicConfig(level=logging.INFO)
+
+
 class TransformMode(Enum):
+    """Specifies the convention under which a camera pose is expressed."""
     # P = RX + t
     BAL = 1
     # P = R'(X - t)
@@ -73,10 +77,15 @@ def solve(problem: BALBundleAdjustmentProblem, **kw) -> BundleAdjustmentResult:
     # 49 frames, cookbook, num: 1.34e+04
     # 49 frames, num, reparam:  1.34e+04 => looks like reparameterization is OK
 
-    plot_results = kw.get('plot_results', True)
-    analytic_jacobian = kw.get('analytic_jacobian', False)
-    transform_mode = kw.get('transform_mode', TransformMode.CANONICAL)
+    plot_results        = kw.get('plot_results', True)
+    analytic_jacobian   = kw.get('analytic_jacobian', False)
+    transform_mode      = kw.get('transform_mode', TransformMode.CANONICAL)
     # TODO(andrei): Error when leftover kwargs.
+
+    if transform_mode != TransformMode.CANONICAL and analytic_jacobian:
+        raise ValueError("The analytical jacobian computation is only "
+                         "supported when the camera extrinsics are expressed "
+                         "using the canonical parametrization.")
 
     n = 9 * n_cameras + 3 * n_points
     m = 2 * problem.points_2d.shape[0]
@@ -101,7 +110,6 @@ def solve(problem: BALBundleAdjustmentProblem, **kw) -> BundleAdjustmentResult:
         # parameters and the 3D points are very different
         # entities.
         'x_scale': 'jac',
-        'max_nfev': 30,        # Strict but quick
         'ftol': 1e-4,
         'method': 'trf',
         # loss='soft_l1', # seems to work way better than huber/cauchy for BA
@@ -110,6 +118,7 @@ def solve(problem: BALBundleAdjustmentProblem, **kw) -> BundleAdjustmentResult:
         # as opposed to 11300 with the linear loss).
         'args': (n_cameras, n_points, problem.camera_indices,
                  problem.point_indices, problem.points_2d, transform_mode),
+        'max_nfev': kw.get('max_nfev', None),
     }
     if analytic_jacobian:
         optimization_kwargs['jac'] = jac_clean
@@ -239,10 +248,18 @@ def render_structure(x, n_cameras, n_points, title=None, **kw):
               length=0.5)
 
 
-def get_P(points, camera_params):
-    points_rot = rotate(points, camera_params[:, :3])
-    points_trans = points_rot + camera_params[:, 3:6]
-    return points_trans
+# TODO(andrei): There is code duplication between this and 'project'. Get rid of it.
+def get_P(points, camera_params, transform_mode):
+    if transform_mode == TransformMode.BAL:
+        points_rot = rotate(points, camera_params[:, :3])
+        points_transformed = points_rot + camera_params[:, 3:6]
+        return points_transformed
+    elif transform_mode == TransformMode.CANONICAL:
+        points_off = points - camera_params[:, 3:6]
+        points_transformed = rotate(points_off, -camera_params[:, :3])
+        return points_transformed
+
+
 
 
 def project(points, camera_params, transform_mode):
@@ -327,6 +344,9 @@ def jac_pproj(P):
     Py = P[1]
     Pz = P[2]
     Pz2 = Pz * Pz
+    assert Px.shape == Py.shape
+    assert Py.shape == Pz.shape
+    assert Pz.shape == Pz2.shape
     return np.array([
         [-1.0 / Pz,          0,  Px / Pz2],
         [        0,  -1.0 / Pz,  Py / Pz2]
@@ -344,6 +364,16 @@ def jac_clean(params, n_cameras, n_points, camera_indices, point_indices, points
     points_3d = params[n_cameras * 9:].reshape((n_points, 3))
     points_proj = project(points_3d[point_indices], camera_params[camera_indices], transform_mode)
 
+    # Used to verify that 'numeric_jacobian' works correctly. It does (but it's
+    # very slow, as expected for something implemented almost entirely in pure
+    # Python).
+    # print("Actually doing (naive) numeric Jacobian evaluation.")
+    # def fun_proxy(xxx):
+    #     return fun(xxx, n_cameras, n_points, camera_indices,
+    #                point_indices, points_2d, transform_mode, check=False)
+    # num_jac = numeric_jacobian(fun_proxy, params)
+    # return csr_matrix(num_jac)
+
     # Even for two frames the jacobian is 3400x4000, so 1.2M parameters...
     # Yes, mostly empty, but still...
     J = lil_matrix((m,n), dtype=float)
@@ -352,9 +382,10 @@ def jac_clean(params, n_cameras, n_points, camera_indices, point_indices, points
 
     print("[jac] Starting Jacobian computation.")
     start_t = time.time()
-    Ps = get_P(points_3d[point_indices], camera_params[camera_indices])
+    Ps = get_P(points_3d[point_indices], camera_params[camera_indices], transform_mode)
     print("[jac] Ps.shape = {}".format(Ps.shape))
     Ps_projected = - Ps[:, 0:2] / Ps[:, 2, np.newaxis]
+    print("[jac] Ps_projected.shape = {}".format(Ps_projected.shape))
 
     # NOTE: When using lil_matrices special care has to be taken to not incur
     # huge insertion costs.
@@ -373,8 +404,11 @@ def jac_clean(params, n_cameras, n_points, camera_indices, point_indices, points
         P = Ps[p_idx]
 
         J_proj_wrt_P                = jac_pproj(P)
-        J_transform_wrt_twist       = np.hstack((-skew(P), np.eye(3)))
-        J_transform_wrt_delta_3d    = R
+        J_transform_wrt_twist       = np.hstack((skew(P), -np.eye(3)))
+        J_transform_wrt_delta_3d    = R.transpose()
+        assert J_proj_wrt_P.shape == (2, 3)
+        assert J_transform_wrt_twist.shape == (3, 6)
+        assert J_transform_wrt_delta_3d.shape == (3, 3)
 
         # Jacobian wrt the extrinsic camera params
         h1 = f * np.dot(J_proj_wrt_P, J_transform_wrt_twist)
@@ -406,16 +440,53 @@ def jac_clean(params, n_cameras, n_points, camera_indices, point_indices, points
     # print("J.min = {:.4f}".format(J.data.min()))
     # print("J.max = {:.4f}".format(J.data.max()))
 
-    # # plt.spy(J)
-    # denseJ = J_csr.todense()
-    # # denseJ[J_csr.nonzero()] = 50
-    # denseJ[denseJ != 0.0] = 100
-    # plot = plt.imshow(denseJ, cmap=cm.viridis)
-    # plt.colorbar(plot)
+    # plt.figure()
+    # plt.spy(J)
+    # plt.title("spy(J)")
+    #
+    # plt.figure()
+    # plt.spy(J, precision=0.001)
+    # plt.title("spy(J) with prec")
     # plt.show()
 
     if check:
-        print("Performing gradient check:")
+        def fun_proxy(xxx):
+            return fun(xxx, n_cameras, n_points, camera_indices,
+                       point_indices, points_2d, transform_mode, check=False)
+        print("[jac][check] Estimating Jacobian numerically...")
+        num_jac = numeric_jacobian(fun_proxy, params)
+        print("[jac][check] Numeric Jacobian shape: {} | Our shape: {}".format(
+            num_jac.shape, J_csr.shape
+        ))
+        print("[jac][check] Preparing plots...")
+        # Work on a subset for simplicity's sake, since if there's a bug, it
+        # will show up everywhere anyway.
+        denseJ = J_csr[:200, :200].todense()
+        num_jac = num_jac[:200, :200]
+        plt.figure()
+        err = denseJ - num_jac
+        max_err = 500
+        err[err > max_err] = max_err
+        err[err < -max_err] = -max_err
+        plot = plt.imshow(err)
+        plt.title("Delta")
+        plt.colorbar(plot)
+
+        # plt.figure()
+        # denseJ[J_csr.nonzero()] = 50
+        # denseJ[denseJ != 0.0] = 100
+        # plot = plt.imshow(denseJ) #, cmap=cm.viridis)
+
+        print("Will show plots.")
+        plt.show()
+
+        # FFS WTF MAN. So. SciPy can perform gradient checks, but not jacobian
+        # checks, even though it CLEARLY estimates jacobians when doing
+        # optimization. OH, perhaps that estimation part is deep inside LAPACK
+        # and scipy hasnt wrapped it properly?
+        # TODO(andrei): See how scipy does the numerical estimation of the
+        # gradient.
+        # print("Performing gradient check:")
         # TODO(andrei): If this doesn't work, use numdifftools!
         # Note: scipy does not support jacobian checking; we should use the
         # functionality from the pysfm project (finite_differences.py)
@@ -426,6 +497,9 @@ def jac_clean(params, n_cameras, n_points, camera_indices, point_indices, points
 
     return J_csr
 
+
+# Do NOT use these jacobian functions.
+# TODO(andrei): Remove them once 'jac_clean' is confirmed to be correct!
 
 def jac_slow(params, n_cameras, n_points, camera_indices, point_indices, points_2d):
     m = camera_indices.size * 2

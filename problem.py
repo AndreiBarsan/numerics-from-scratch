@@ -35,12 +35,21 @@ class BundleAdjustmentProblem(Problem):
     def __init__(self, name):
         Problem.__init__(self, name)
 
+    def get_3d_point_count(self):
+        pass
+
 
 class BALBundleAdjustmentProblem(BundleAdjustmentProblem):
     def __init__(self, name, data_fpath, load_params):
         BundleAdjustmentProblem.__init__(self, name)
         self.data_fpath = data_fpath
         self._load(self.data_fpath, **load_params)
+
+    def get_3d_point_count(self):
+        return self.points_3d.shape[0]
+
+    def get_2d_point_count(self):
+        return self.points_2d.shape[0]
 
     def _load_vanilla(self, data_fpath):
         with open(data_fpath, "rt") as file:
@@ -124,29 +133,12 @@ class BALBundleAdjustmentProblem(BundleAdjustmentProblem):
                 camera_params[i] = float(file.readline())
             camera_params = camera_params.reshape((n_cameras, -1))
 
-            if canonical_rots:
-                print("Making camera rotations canonical!")
-                for i in range(n_cameras):
-                    # R <- R'
-                    camera_params[i, 0:3] *= -1
-                    # t <- -R' * t
-                    print("Rot")
-                    print(camera_params[i, 3:6, np.newaxis])
-                    print(camera_params[i, 3:6, np.newaxis].shape)
-                    print("Trans")
-                    print(camera_params[i, 0:3, np.newaxis])
-                    print(camera_params[i, 0:3, np.newaxis].shape)
-
-                    camera_params[i, 3:6] = -1 * rotate(camera_params[i, 3:6, np.newaxis].T, # point
-                                                        camera_params[i, 0:3, np.newaxis].T) # rot
-                print("Finished adjusting camera rotations.")
-
             n_real_points = len(seen_point_indexes)
             points_3d = np.empty(n_real_points * 3)
             points_3d_buf = np.empty(n_points * 3)
 
-            print("Seen point count:  {}".format(n_real_points))
-            print("Given point count: {}".format(n_points))
+            # print("Seen point count:  {}".format(n_real_points))
+            # print("Given point count: {}".format(n_points))
 
             point_3d_idx_map = {}
 
@@ -156,7 +148,6 @@ class BALBundleAdjustmentProblem(BundleAdjustmentProblem):
             # indices of the points we do keep, so we can properly update the
             # observations.
             for point_coord_idx in range(n_points * 3):
-                # WHY is this part of the file suddenly one-coord-per-line???
                 point = float(file.readline())
                 points_3d_buf[point_coord_idx] = point
 
@@ -189,7 +180,8 @@ class BALBundleAdjustmentProblem(BundleAdjustmentProblem):
             if max_frames != -1:
                 camera_params = camera_params[:max_frames,:]
 
-            print(camera_params.shape)
+            if canonical_rots:
+                make_canonical(camera_params)
 
         self.camera_params = camera_params
         self.points_3d = points_3d
@@ -201,3 +193,21 @@ class BALBundleAdjustmentProblem(BundleAdjustmentProblem):
 class NISTBundleAdjustmentProblem(BundleAdjustmentProblem):
     def __init__(self):
         raise NotImplementedError()
+
+
+def make_canonical(camera_params):
+    """Converts the camera transforms into proper camera poses.
+
+    Args:
+        camera_params: An N x k (with k at least 6) matrix where every row is a
+                       camera matrix with the first 3 values representing a
+                       rotation axis and the next 3 values a translation.
+                       Modified in-place!
+    """
+    for i in range(camera_params.shape[0]):
+        t = camera_params[i, 3:6, np.newaxis].T
+        omega = camera_params[i, 0:3, np.newaxis].T
+        # R <- R'
+        camera_params[i, 0:3] = -omega
+        # t <- R' * (-t)
+        camera_params[i, 3:6] = -1 * rotate(t, omega)
