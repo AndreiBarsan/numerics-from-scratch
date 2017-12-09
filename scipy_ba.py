@@ -38,6 +38,10 @@ from problem import BALBundleAdjustmentProblem
 logging.basicConfig(level=logging.INFO)
 
 
+# The most severe bug I had was that I had two functions for transforming a
+# point from world to camera coords, but I only updated only one of them to
+# account for the reparameterization.
+
 class TransformMode(Enum):
     """Specifies the convention under which a camera pose is expressed."""
     # P = RX + t
@@ -77,9 +81,28 @@ def solve(problem: BALBundleAdjustmentProblem, **kw) -> BundleAdjustmentResult:
     # 49 frames, cookbook, num: 1.34e+04
     # 49 frames, num, reparam:  1.34e+04 => looks like reparameterization is OK
 
+    # Results from December 8-9
+    # TODO(andrei): Write for 10, 15, and 20 frames num vs anal.
+
+    raise ValueError("These still seems to be a bug in your computation of the "
+                     "jacobian of the residual wrt cam extrinsics. The part "
+                     "wrt the 3D point is OK.")
+    # I don't know what could be causing this. I doubt it's numerical stuff,
+    # especially since, overall, I'm not getting results as good as the ones
+    # using finite differences or ceres. Actually, I should double check with
+    # ceres (without radial distortion part).
+    # I should do the same thing I do here with Ceres:
+    #   - compute analytical jacobian in Ceres
+    #     - remove radial distortion first
+    #   - compute numerical Jacobian in Ceres (see gradient checker code)
+    #   - compare by visualizing; if there's no gap, then there's an issue with
+    #   how I'm computing the bad part of the jacobian. Otherwise, the issue is
+    #   someplace else in my implementation.
+
     plot_results        = kw.get('plot_results', True)
     analytic_jacobian   = kw.get('analytic_jacobian', False)
     transform_mode      = kw.get('transform_mode', TransformMode.CANONICAL)
+    check_jacobians     = kw.get('check_jacobians', True)
     # TODO(andrei): Error when leftover kwargs.
 
     if transform_mode != TransformMode.CANONICAL and analytic_jacobian:
@@ -98,7 +121,7 @@ def solve(problem: BALBundleAdjustmentProblem, **kw) -> BundleAdjustmentResult:
     x0 = np.hstack((problem.camera_params.ravel(), problem.points_3d.ravel()))
     x0_copy = np.copy(x0)
     f0 = fun(x0, n_cameras, n_points, problem.camera_indices,
-             problem.point_indices, problem.points_2d, transform_mode)
+             problem.point_indices, problem.points_2d, transform_mode, False)
 
     # plt.ion()
     # plt.plot(f0)
@@ -117,10 +140,12 @@ def solve(problem: BALBundleAdjustmentProblem, **kw) -> BundleAdjustmentResult:
         # slower (gets 7300 on the first ladybug dataset,
         # as opposed to 11300 with the linear loss).
         'args': (n_cameras, n_points, problem.camera_indices,
-                 problem.point_indices, problem.points_2d, transform_mode),
+                 problem.point_indices, problem.points_2d, transform_mode,
+                 check_jacobians),
         'max_nfev': kw.get('max_nfev', None),
     }
     if analytic_jacobian:
+        print("Computing Jacobian analytically")
         optimization_kwargs['jac'] = jac_clean
     else:
         print("Estimating Jacobian using finite differences.")
@@ -277,11 +302,11 @@ def project(points, camera_params, transform_mode):
     f = camera_params[:, 6]
 
     # Apply the radial distortion
-    k1 = camera_params[:, 7]
-    k2 = camera_params[:, 8]
+    # k1 = camera_params[:, 7]
+    # k2 = camera_params[:, 8]
 
-    d = np.sum(points_proj ** 2, axis = 1)
-    r = 1 + k1 * d + k2 * d**2
+    # d = np.sum(points_proj ** 2, axis = 1)
+    # r = 1 + k1 * d + k2 * d**2
 
     # First LB dataset, no radial: converges more slowly, but does eventually
     # converge to cost ~ 15000, which is decent.
@@ -353,10 +378,9 @@ def jac_pproj(P):
     ])
 
 
-def jac_clean(params, n_cameras, n_points, camera_indices, point_indices, points_2d, transform_mode, check=True):
+def jac_clean(params, n_cameras, n_points, camera_indices, point_indices, points_2d, transform_mode, check_jacobians):
     m = camera_indices.size * 2
     n = n_cameras * 9 + n_points * 3
-    A = lil_matrix((m, n), dtype=int)
 
     # i = np.arange(camera_indices.size)
 
@@ -449,7 +473,7 @@ def jac_clean(params, n_cameras, n_points, camera_indices, point_indices, points
     # plt.title("spy(J) with prec")
     # plt.show()
 
-    if check:
+    if check_jacobians:
         def fun_proxy(xxx):
             return fun(xxx, n_cameras, n_points, camera_indices,
                        point_indices, points_2d, transform_mode, check=False)
@@ -461,11 +485,12 @@ def jac_clean(params, n_cameras, n_points, camera_indices, point_indices, points
         print("[jac][check] Preparing plots...")
         # Work on a subset for simplicity's sake, since if there's a bug, it
         # will show up everywhere anyway.
-        denseJ = J_csr[:200, :200].todense()
-        num_jac = num_jac[:200, :200]
+        jac_plotlim = 2000
+        denseJ = J_csr[:jac_plotlim, :jac_plotlim].todense()
+        num_jac = num_jac[:jac_plotlim, :jac_plotlim]
         plt.figure()
         err = denseJ - num_jac
-        max_err = 500
+        max_err = 100
         err[err > max_err] = max_err
         err[err < -max_err] = -max_err
         plot = plt.imshow(err)

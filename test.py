@@ -7,9 +7,13 @@ from problem import BALBundleAdjustmentProblem
 from scipy_ba import solve, TransformMode
 
 # TODO(andrei): Test to error out when non-canonical formulation + analytic J.
+# TODO(andrei): Also check actual final parameters.
+# TODO(andrei): Option to check loss over time for both compared methods.
+
+
 
 ladybug_49_data_fpath = pjoin("data", "small", "problem-49-7776-pre.txt")
-
+trafalgar_21_data_fpath = pjoin("data", "small", "problem-21-11315-pre.txt.bz2")
 
 def get_ladybug(fpath, **kw):
     return BALBundleAdjustmentProblem("LadyBug", fpath, load_params=kw)
@@ -95,17 +99,29 @@ class TestReparameterization(unittest.TestCase):
 class TestAnalyticalJacobian(unittest.TestCase):
 
     def test_small(self):
+        # As of December 08 (evening), this seems to work ok for 10 frames or
+        # so, i.e., the solutions of analytic and numeric jacobians are similar,
+        # but for 20 frames the ana solution starts falling behind, failing the
+        # test by a large margin, being substantially worth than the numerical
+        # approximation.
         max_frames = 3
 
         def get_dataset():
-            return get_ladybug(ladybug_49_data_fpath,
-                               max_frames=max_frames,
-                               canonical_rots=True)
+            # return get_ladybug(ladybug_49_data_fpath,
+            #                    max_frames=max_frames,
+            #                    canonical_rots=True)
+            return BALBundleAdjustmentProblem("Trafalgar 21",
+                                              trafalgar_21_data_fpath,
+                                              load_params={
+                                                  'max_frames': max_frames,
+                                                  'canonical_rots': True
+                                              })
+
         args = {
-            'plot_results': False,
+            'plot_results': True,
             'transform_mode': TransformMode.CANONICAL,
             # TODO(andrei): Make this lower!
-            'max_nfev': 30
+            'max_nfev': 30,
         }
 
         result_num = solve(get_dataset(), analytic_jacobian=False, **args)

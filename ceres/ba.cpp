@@ -61,9 +61,9 @@ struct SnavelyReprojectionError {
     static ceres::CostFunction* Create(const double observed_x, const double observed_y) {
         // Two residuals and two param blocks, with 9 (camera) and 3 (3D point) params, respectively,
         // hence the 2, 9, 3 template args.
-        return (new ceres::AutoDiffCostFunction<SnavelyReprojectionError, 2, 9, 3>(
-                new SnavelyReprojectionError(observed_x, observed_y)
-        ));
+        ceres::AutoDiffCostFunction *res = new ceres::AutoDiffCostFunction<SnavelyReprojectionError, 2, 9, 3>(
+                new SnavelyReprojectionError(observed_x, observed_y));
+        return res;
     }
 
     double observed_x;

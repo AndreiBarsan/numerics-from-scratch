@@ -44,7 +44,15 @@ def rotate(points, rot_vecs):
     # Make a column vector with the rotation angles of each rotation vector.
     # axis = 1 => compute the operation for every row, so collapse the column
     #  count.
+
     theta = np.linalg.norm(rot_vecs, axis=1)[:, np.newaxis]
+
+    eps = 1e-8
+    count = np.sum(theta <= eps)
+    if count > 0:
+        # TODO(andrei): Is this sensible?
+        raise ValueError("Error: {} rotation axes with SUPER TINY angles found!".format(count))
+
     with np.errstate(invalid='ignore'):
         v = rot_vecs / theta
         v = np.nan_to_num(v)
