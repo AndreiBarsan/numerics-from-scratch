@@ -19,6 +19,8 @@ def numeric_derivative(f, x0, h=1e-8):
 
 ################################################################################
 def numeric_jacobian(f, x0, h=1e-8):
+    raise ValueError("Do NOT use this! scipy.optimize._numdiff.approx_derivative "
+                     "is much faster and works with sparse data!!")
     x0 = atleast_1d(x0)
     f0 = atleast_1d(f(x0))
 
@@ -27,10 +29,16 @@ def numeric_jacobian(f, x0, h=1e-8):
     xlen = x0.size
     flen = f0.size
 
+    print("Starting to estimate Jacobian numerically...", end='')
+
     J = empty((flen, xlen))
     for i in range(xlen):
+        if (i+1) % 100 == 0:
+            print("\rJ estimation {}/{}.".format(i+1, xlen), end='', flush=True)
         ei = h * axis(i,xlen)
         J[:,i] = (f(x0+ei) - f(x0-ei)) / (2. * h)
+
+    print("")
 
     return J
 

@@ -17,6 +17,7 @@ import matplotlib
 
 # Needed even if unused!
 from mpl_toolkits.mplot3d import Axes3D
+from scipy.optimize._numdiff import approx_derivative, check_derivative
 
 matplotlib.rc('font', size='8')
 # This seems the least slow way of visualizing stuff in 3D. The mayavi library
@@ -81,12 +82,31 @@ def solve(problem: BALBundleAdjustmentProblem, **kw) -> BundleAdjustmentResult:
     # 49 frames, cookbook, num: 1.34e+04
     # 49 frames, num, reparam:  1.34e+04 => looks like reparameterization is OK
 
-    # Results from December 8-9
-    # TODO(andrei): Write for 10, 15, and 20 frames num vs anal.
+    # Results from December 13
+    # 5 frames, num:          4.7065e+03 after 14-20 iterations (max 20 fev)
+    # 5 frames, anal:         4.7049e+03 after 15-20 iterations (max 20 fev)
+    # 12 frames, num:         1.99989e+03 after 17-20 iterations (max 20 fev)
+    # 12 frames, anal:        1.99910e+03 after 17-20 iterations (max 20 fev)
 
-    raise ValueError("These still seems to be a bug in your computation of the "
-                     "jacobian of the residual wrt cam extrinsics. The part "
-                     "wrt the 3D point is OK.")
+    # 15 frames, num:         2.7316e+03 after 23-27 iterations (max 30 fev)
+    # 15 frames, anal:        2.7332e+03 after 21-25 iterations (max 30 fev)
+    #
+    # !!! First significant difference
+    #     (MUCH slower convergence to slightly worse solution)
+    # 20 frames, num:           3.9933e+03 after 10-13 iterations (max 30 fev)
+    # 20 frames, anal:          4.2684e+03 after 26-30 iterations (max 30 fev)
+    # 20 frames, anal, fast:    <TODO> (more vectorized stuff)
+    # 20 frames, anal, patched: 3.9933e+03 after 10-13 iterations (max 30 fev)
+    #
+    # 25 frames, num:         5.11136e+03 after 9-11 iterations (max 30 fev)
+    # 25 frames, anal:        6.07250e+03 after 26-30 iteratins (max 30 fev)
+    #
+    # 35 frames, num:         8.6530e+03 after 13-15 iterations (max 30 fev)
+    # 35 frames, anal:        1.0559e+04 after 26-30 iterations (max 30 fev)
+
+    # all frames, num:            1.5051e+04 after 16-19 iterations (max 30 fev)
+    # all frames, anal, patched:  1.5043e+04 after 16-18 iterations (max 30 fev)
+
     # I don't know what could be causing this. I doubt it's numerical stuff,
     # especially since, overall, I'm not getting results as good as the ones
     # using finite differences or ceres. Actually, I should double check with
@@ -99,7 +119,7 @@ def solve(problem: BALBundleAdjustmentProblem, **kw) -> BundleAdjustmentResult:
     #   how I'm computing the bad part of the jacobian. Otherwise, the issue is
     #   someplace else in my implementation.
 
-    plot_results        = kw.get('plot_results', True)
+    plot_results        = kw.get('plot_results', False)
     analytic_jacobian   = kw.get('analytic_jacobian', False)
     transform_mode      = kw.get('transform_mode', TransformMode.CANONICAL)
     check_jacobians     = kw.get('check_jacobians', True)
@@ -421,13 +441,15 @@ def jac_clean(params, n_cameras, n_points, camera_indices, point_indices, points
         cam_idx = camera_indices[p_idx]
         point_3d_idx = point_indices[p_idx]
 
-        # TODO derive Jacobian blocks here as matrices, then assign to the
-        # proper slot in the main Jacobian.
+        # TODO(andrei): Look at what derivatives are used in the gvnn paper and
+        # in the Torch (Lua) source code.
 
         R = SO3.exp(camera_params[camera_indices[p_idx], 0:3])
         P = Ps[p_idx]
 
         J_proj_wrt_P                = jac_pproj(P)
+        # TODO(andrei): This specific part is likely wrong. jac_pproj is likely
+        # OK, since it is also applied to the delta_3D part, which is OK.
         J_transform_wrt_twist       = np.hstack((skew(P), -np.eye(3)))
         J_transform_wrt_delta_3d    = R.transpose()
         assert J_proj_wrt_P.shape == (2, 3)
@@ -478,32 +500,64 @@ def jac_clean(params, n_cameras, n_points, camera_indices, point_indices, points
             return fun(xxx, n_cameras, n_points, camera_indices,
                        point_indices, points_2d, transform_mode, check=False)
         print("[jac][check] Estimating Jacobian numerically...")
-        num_jac = numeric_jacobian(fun_proxy, params)
+        # Estimate the Jacobian numerically using a function built into SciPy
+        # (but which is tricky to find since it's not part of the public API).
+        A = ba_sparsity(n_cameras, n_points, camera_indices, point_indices)
+        num_jac = approx_derivative(fun_proxy, params, sparsity=A)
         print("[jac][check] Numeric Jacobian shape: {} | Our shape: {}".format(
             num_jac.shape, J_csr.shape
         ))
-        print("[jac][check] Preparing plots...")
-        # Work on a subset for simplicity's sake, since if there's a bug, it
-        # will show up everywhere anyway.
-        jac_plotlim = 2000
-        denseJ = J_csr[:jac_plotlim, :jac_plotlim].todense()
-        num_jac = num_jac[:jac_plotlim, :jac_plotlim]
-        plt.figure()
-        err = denseJ - num_jac
-        max_err = 100
-        err[err > max_err] = max_err
-        err[err < -max_err] = -max_err
-        plot = plt.imshow(err)
-        plt.title("Delta")
-        plt.colorbar(plot)
+        show_delta = True
+
+        def jac_proxy(jxx):
+            return jac_clean(jxx, n_cameras, n_points, camera_indices,
+                             point_indices, points_2d, transform_mode, check_jacobians=False)
+
+        # As of dec 13, I'm getting like 5-6 on this, so my Jacobian is
+        # definitely NOT correct.
+        # acc = check_derivative(fun_proxy, jac_proxy, params)
+        # print("[jac][check] Checked jac acc: {:.8f}".format(acc))
+        # print("[jac][check] Lower than say 1e-6 means jac impl is likely OK.")
+
+        if show_delta:
+            print("[jac][check] Preparing plots...")
+            # Work on a subset for simplicity's sake, since if there's a bug, it
+            # will show up everywhere anyway.
+            jac_plotlim = 150
+            denseJ = J_csr[:jac_plotlim, :jac_plotlim].todense()
+            num_jac = num_jac[:jac_plotlim, :jac_plotlim]
+            err = denseJ - num_jac
+            max_err = 100
+            err[err > max_err] = max_err
+            err[err < -max_err] = -max_err
+            #
+            plt.figure()
+            plot = plt.imshow(err)
+            plt.title("Delta")
+            plt.colorbar(plot)
+            plt.show()
+
+        # plt.figure()
+        # plot = plt.imshow(denseJ)
+        # plt.title("Analytic version")
+        # plt.colorbar(plot)
+        # #
+        # plt.figure()
+        # plot = plt.imshow(num_jac)
+        # plt.title("Numerical Jacobian")
+        # plt.colorbar(plot)
 
         # plt.figure()
         # denseJ[J_csr.nonzero()] = 50
         # denseJ[denseJ != 0.0] = 100
         # plot = plt.imshow(denseJ) #, cmap=cm.viridis)
 
-        print("Will show plots.")
-        plt.show()
+        # print("Patching analytic jacobian...")
+        # Yes, this seems to solve our problems! (checked on entire 49-frame sequence)
+        # J_csr[:, 0:n_cameras*cam_param_count] = num_jac[:, 0:n_cameras*cam_param_count]
+
+        # print("Will show plots.")
+        # plt.show()
 
         # FFS WTF MAN. So. SciPy can perform gradient checks, but not jacobian
         # checks, even though it CLEARLY estimates jacobians when doing
@@ -519,6 +573,11 @@ def jac_clean(params, n_cameras, n_points, camera_indices, point_indices, points
         #     n_cameras, n_points, camera_indices, point_indices, points_2d, False
         # )
         # print("Estimated gradient error:", gradient_err)
+
+        # raise ValueError("Try \"patching\" the jacobian, in that you keep the "
+        #                  "analytic one, but replace the camera bits with the "
+        #                  "numerical estimation, and see if you converge to the "
+        #                  "same cost as the purely numerical method.")
 
     return J_csr
 

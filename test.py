@@ -104,21 +104,24 @@ class TestAnalyticalJacobian(unittest.TestCase):
         # but for 20 frames the ana solution starts falling behind, failing the
         # test by a large margin, being substantially worth than the numerical
         # approximation.
-        max_frames = 3
+        max_frames = 10
 
         def get_dataset():
-            # return get_ladybug(ladybug_49_data_fpath,
-            #                    max_frames=max_frames,
-            #                    canonical_rots=True)
-            return BALBundleAdjustmentProblem("Trafalgar 21",
-                                              trafalgar_21_data_fpath,
-                                              load_params={
-                                                  'max_frames': max_frames,
-                                                  'canonical_rots': True
-                                              })
+            return get_ladybug(ladybug_49_data_fpath,
+                               max_frames=max_frames,
+                               canonical_rots=True)
+            # Non-sequential datasets are bad because it means most keypoints
+            # are seen even from very few frames, so numerically estimating the
+            # Jacobian is very slow.
+            # return BALBundleAdjustmentProblem("Trafalgar 21",
+            #                                   trafalgar_21_data_fpath,
+            #                                   load_params={
+            #                                       'max_frames': max_frames,
+            #                                       'canonical_rots': True
+            #                                   })
 
         args = {
-            'plot_results': True,
+            'plot_results': False,
             'transform_mode': TransformMode.CANONICAL,
             # TODO(andrei): Make this lower!
             'max_nfev': 30,
