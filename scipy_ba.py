@@ -305,16 +305,19 @@ def get_P(points, camera_params, transform_mode):
         return points_transformed
 
 
-
-
 def project(points, camera_params, transform_mode):
     """Project n 3D points to 2D."""
     if transform_mode == TransformMode.BAL:
         points_proj = rotate(points, camera_params[:, :3])
         points_proj += camera_params[:, 3:6]
     else:
+        # This is the formulation presented in, e.g., the CVPR '14 Tutorial by
+        # Prof. Frank Dellaert.
         # P = R' * (X - t)
         points_off = points - camera_params[:, 3:6]
+        # Note: negating an axis-angle representation is the same as transposing
+        # (i.e., inverting the otherwise orthogonal) corresponding rotation
+        # matrix.
         points_proj = rotate(points_off, -camera_params[:, :3])
 
     points_proj = -points_proj[:, 0:2] / points_proj[:, 2, np.newaxis]
@@ -398,6 +401,12 @@ def jac_pproj(P):
     ])
 
 
+def gvnn_deriv(omg, R):
+    # XXX document this or remove
+    for i in range(3):
+        pass
+
+
 def jac_clean(params, n_cameras, n_points, camera_indices, point_indices, points_2d, transform_mode, check_jacobians):
     m = camera_indices.size * 2
     n = n_cameras * 9 + n_points * 3
@@ -436,6 +445,7 @@ def jac_clean(params, n_cameras, n_points, camera_indices, point_indices, points
     cam_param_count = 9
     for p_idx in range(points_proj_count):
         f = camera_params[camera_indices[p_idx], 6]
+        P_world = points_3d[point_indices[p_idx]]
 
         x_idx = p_idx * 2
         cam_idx = camera_indices[p_idx]
@@ -444,13 +454,39 @@ def jac_clean(params, n_cameras, n_points, camera_indices, point_indices, points
         # TODO(andrei): Look at what derivatives are used in the gvnn paper and
         # in the Torch (Lua) source code.
 
-        R = SO3.exp(camera_params[camera_indices[p_idx], 0:3])
+        # The axis-angle representation of the cam. rotation
+        omg = camera_params[camera_indices[p_idx], 0:3]
+        # Wait, is this sensible? We should prolly use the full ugly formula...
+        t_cam = camera_params[camera_indices[p_idx], 3:6]
+
+        R = SO3.exp(omg)
         P = Ps[p_idx]
 
         J_proj_wrt_P                = jac_pproj(P)
-        # TODO(andrei): This specific part is likely wrong. jac_pproj is likely
-        # OK, since it is also applied to the delta_3D part, which is OK.
-        J_transform_wrt_twist       = np.hstack((skew(P), -np.eye(3)))
+        # The approach from the 2014 CVPR tutorial. Does not seem to work.
+        # <removed>
+        # NOPE PILE
+        # J_transform_wrt_omega = skew(P)
+        # J_transform_wrt_omega = skew(P_world)
+        # J_transform_wrt_omega = np.dot(R.transpose(), skew(P_world))
+        # J_transform_wrt_omega = np.dot(R, skew(P_world))
+        # J_transform_wrt_omega = skew(np.dot(R, P_world))
+        # J_transform_wrt_omega = skew(np.dot(R.transpose(), P_world))
+        # J_transform_wrt_omega = skew(np.dot(R, P)) Almost OK
+        # J_transform_wrt_omega = skew(np.dot(R.transpose(), P))   Almost OK
+        # END NOPE PILE
+
+        # ensure you use the right translation
+        # J_transform_wrt_omega = skew(np.dot(R.transpose(), P_world - t_cam))
+        J_transform_wrt_omega = skew(P)
+
+        # J_transform_wrt_twist       = np.dot(R.transpose(), np.hstack((J_transform_wrt_omega, -np.eye(3))))
+        # December 14: I briefly skimmed doc/math.pdf from the GTSAM docs. Found
+        # some relevant stuff but I need to read more carefully. -R.transpose()
+        # is the correct derivative of the second half of the matrix!! It leads
+        # to basically zero error.
+        J_transform_wrt_twist       = np.hstack((J_transform_wrt_omega, -R.transpose()))
+        # J_transform_wrt_twist       = np.hstack((J_transform_wrt_omega, -np.eye(3)))
         J_transform_wrt_delta_3d    = R.transpose()
         assert J_proj_wrt_P.shape == (2, 3)
         assert J_transform_wrt_twist.shape == (3, 6)
@@ -515,9 +551,9 @@ def jac_clean(params, n_cameras, n_points, camera_indices, point_indices, points
 
         # As of dec 13, I'm getting like 5-6 on this, so my Jacobian is
         # definitely NOT correct.
-        # acc = check_derivative(fun_proxy, jac_proxy, params)
-        # print("[jac][check] Checked jac acc: {:.8f}".format(acc))
-        # print("[jac][check] Lower than say 1e-6 means jac impl is likely OK.")
+        acc = check_derivative(fun_proxy, jac_proxy, params)
+        print("[jac][check] Checked jac acc: {:.8f}".format(acc))
+        print("[jac][check] Lower than say 1e-6 means jac impl is likely OK.")
 
         if show_delta:
             print("[jac][check] Preparing plots...")
@@ -530,22 +566,23 @@ def jac_clean(params, n_cameras, n_points, camera_indices, point_indices, points
             max_err = 100
             err[err > max_err] = max_err
             err[err < -max_err] = -max_err
-            #
+
             plt.figure()
             plot = plt.imshow(err)
             plt.title("Delta")
             plt.colorbar(plot)
-            plt.show()
 
-        # plt.figure()
-        # plot = plt.imshow(denseJ)
-        # plt.title("Analytic version")
-        # plt.colorbar(plot)
-        # #
-        # plt.figure()
-        # plot = plt.imshow(num_jac)
-        # plt.title("Numerical Jacobian")
-        # plt.colorbar(plot)
+            plt.figure()
+            plot = plt.imshow(denseJ)
+            plt.title("Analytic version")
+            plt.colorbar(plot)
+
+            plt.figure()
+            plot = plt.imshow(num_jac.todense())
+            plt.title("Numerical Jacobian")
+            plt.colorbar(plot)
+
+            plt.show()
 
         # plt.figure()
         # denseJ[J_csr.nonzero()] = 50
