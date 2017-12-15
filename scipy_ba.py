@@ -38,10 +38,13 @@ from problem import BALBundleAdjustmentProblem
 
 logging.basicConfig(level=logging.INFO)
 
-
 # The most severe bug I had was that I had two functions for transforming a
 # point from world to camera coords, but I only updated only one of them to
 # account for the reparameterization.
+
+# TODO(andrei): Ensure your rotation method works ok. As a sanity check, instead
+# of doing the batch rotations using 'rotate', just compute each camera's rot
+# matrix (possibly with some CAREFUL caching) and use that to transform points.
 
 class TransformMode(Enum):
     """Specifies the convention under which a camera pose is expressed."""
@@ -225,10 +228,10 @@ def render_structure(x, n_cameras, n_points, title=None, **kw):
     structure = x[n_cameras * 9:].reshape(n_points, 3)
     print(structure.shape)
 
-    min_3d_points_to_render = 1500
+    max_3d_points_to_render = 1500
     sample = np.random.choice(
         np.arange(0, structure.shape[0]),
-        min(min_3d_points_to_render, structure.shape[0]),
+        min(max_3d_points_to_render, structure.shape[0]),
         False)
     deltas = kw.get('deltas', None)
     if deltas is not None:
@@ -277,7 +280,8 @@ def render_structure(x, n_cameras, n_points, title=None, **kw):
     # Very naive rendering of cameras
     # TODO(andrei): Ensure they get rendered right. Looks a bit funny right now.
     # TODO(andrei): Also show camera orientation and quantify the change in
-    # their pose undergone after BA.
+    # their pose undergone after BA. (plot the camera axes, making the forward,
+    # i.e., -Z in the BAL convention, an arrow).
     ax.scatter(cams_3d_pos[:, 0],
                cams_3d_pos[:, 2],
                cams_3d_pos[:, 1],
@@ -464,21 +468,27 @@ def jac_clean(params, n_cameras, n_points, camera_indices, point_indices, points
 
         J_proj_wrt_P                = jac_pproj(P)
         # The approach from the 2014 CVPR tutorial. Does not seem to work.
-        # <removed>
-        # NOPE PILE
         # J_transform_wrt_omega = skew(P)
+        #
+        # NOPE PILE
+        J_transform_wrt_omega = eye(3)
         # J_transform_wrt_omega = skew(P_world)
         # J_transform_wrt_omega = np.dot(R.transpose(), skew(P_world))
         # J_transform_wrt_omega = np.dot(R, skew(P_world))
         # J_transform_wrt_omega = skew(np.dot(R, P_world))
+        # J_transform_wrt_omega = skew(-np.dot(R, P_world))
+        # J_transform_wrt_omega = -skew(np.dot(R, P_world))
         # J_transform_wrt_omega = skew(np.dot(R.transpose(), P_world))
         # J_transform_wrt_omega = skew(np.dot(R, P)) Almost OK
         # J_transform_wrt_omega = skew(np.dot(R.transpose(), P))   Almost OK
+        # J_transform_wrt_omega = np.dot(R, skew(P))
+        # J_transform_wrt_omega = np.dot(R.transpose(), skew(P))
+        # J_transform_wrt_omega = skew(np.dot(-R.transpose(), P))
+        # J_transform_wrt_omega = skew(-np.dot(R.transpose(), P))
         # END NOPE PILE
 
         # ensure you use the right translation
         # J_transform_wrt_omega = skew(np.dot(R.transpose(), P_world - t_cam))
-        J_transform_wrt_omega = skew(P)
 
         # J_transform_wrt_twist       = np.dot(R.transpose(), np.hstack((J_transform_wrt_omega, -np.eye(3))))
         # December 14: I briefly skimmed doc/math.pdf from the GTSAM docs. Found

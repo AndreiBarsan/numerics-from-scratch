@@ -210,4 +210,5 @@ def make_canonical(camera_params):
         # R <- R'
         camera_params[i, 0:3] = -omega
         # t <- R' * (-t)
-        camera_params[i, 3:6] = -1 * rotate(t, omega)
+        # XXX POSSIBLE BUG? Should we rotate by -omega or omega?
+        camera_params[i, 3:6] = -1 * rotate(t, -omega)
