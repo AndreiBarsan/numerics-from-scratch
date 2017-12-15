@@ -19,6 +19,21 @@ def get_ladybug(fpath, **kw):
     return BALBundleAdjustmentProblem("LadyBug", fpath, load_params=kw)
 
 
+# Using explicit 3D rotation matrix for make_canonical:
+# 3: 0.0030
+# 5: 0.0292
+# 10: 0.0006
+# 15: 0.4046
+# -1 (still fails with big gap)
+#
+# Using 'rotate':
+#
+# 3: 0.0287
+# 5: 0.0223
+# 10: 2597 (!)
+# 15: 98
+# 25: 122 (but the second version (reparam'd) was better in cost!)
+
 class TestReparameterization(unittest.TestCase):
 
     def test_reparameterization_03(self):
@@ -76,7 +91,9 @@ class TestReparameterization(unittest.TestCase):
             'plot_results': False,
             'analytic_jacobian': False,
             # Ensures an upper bound on the test run time.
-            'max_nfev': 30,
+            # TODO(andrei): Reparameterized values take longer to converge? Or
+            # at least more fevals?
+            'max_nfev': 50,
         }
         result = solve(problem_bal, transform_mode=TransformMode.BAL, **solver_args)
         result_reparam = solve(problem_bal_reparam,
@@ -84,7 +101,7 @@ class TestReparameterization(unittest.TestCase):
         delta_error = abs(result.cost - result_reparam.cost)
 
         # This essentially translates to, on average 0.001 pixels of error per
-        # 2D point.
+        # 2D point coordinate.
         error_eps = 1e-3 * problem_bal.get_2d_point_count()
 
         self.assertLess(delta_error, error_eps,

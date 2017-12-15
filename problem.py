@@ -4,7 +4,7 @@ import bz2
 
 import numpy as np
 
-from lie import rotate
+from lie import rotate, SO3
 
 
 class Problem(object):
@@ -206,9 +206,25 @@ def make_canonical(camera_params):
     """
     for i in range(camera_params.shape[0]):
         t = camera_params[i, 3:6, np.newaxis].T
-        omega = camera_params[i, 0:3, np.newaxis].T
+        omega = np.copy(camera_params[i, 0:3, np.newaxis].T)
         # R <- R'
         camera_params[i, 0:3] = -omega
         # t <- R' * (-t)
-        # XXX POSSIBLE BUG? Should we rotate by -omega or omega?
         camera_params[i, 3:6] = -1 * rotate(t, -omega)
+
+        # Old sanity checks... (Bug was cause by numpy slicing returning mutable
+        # references sometimes).
+        # R_transpose = SO3.exp(-omega.flatten())
+        # aaa = rotate(t, -omega)
+        # bbb = np.dot(R_transpose, t.T).flatten()
+        #
+        # foo = SO3.exp(-omega.flatten())
+        # ccc = np.dot(foo, t.T).flatten()
+
+        # if not np.allclose(foo, R_transpose):
+        #     raise ValueError("Inconsistent SO3.exp. foo = {}, R_transpose = {}".format(
+        #         foo, R_transpose
+        #     ))
+        #
+        # if not np.allclose(aaa, bbb):
+        #     raise ValueError("Rotation errors. {} != {}".format(aaa, bbb))

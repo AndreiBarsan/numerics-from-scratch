@@ -141,7 +141,7 @@ def solve(problem: BALBundleAdjustmentProblem, **kw) -> BundleAdjustmentResult:
     print("Total number of parameters: {}".format(n))
     print("Total number of residuals: {}".format(m))
 
-    x0 = np.hstack((problem.camera_params.ravel(), problem.points_3d.ravel()))
+    x0 = np.hstack((problem.camera_params.flatten(), problem.points_3d.flatten()))
     x0_copy = np.copy(x0)
     f0 = fun(x0, n_cameras, n_points, problem.camera_indices,
              problem.point_indices, problem.points_2d, transform_mode, False)
@@ -360,7 +360,7 @@ def fun(params, n_cameras, n_points, camera_indices, point_indices, points_2d, t
     points_3d = params[n_cameras * 9:].reshape((n_points, 3))
     points_proj = project(points_3d[point_indices], camera_params[camera_indices], transform_mode)
 
-    residuals = (points_proj - points_2d).ravel()
+    residuals = (points_proj - points_2d).flatten()
 
     # TODO(andrei): Treat this like a hook.
     # if random.random() < 0.05:
@@ -495,8 +495,10 @@ def jac_clean(params, n_cameras, n_points, camera_indices, point_indices, points
         # some relevant stuff but I need to read more carefully. -R.transpose()
         # is the correct derivative of the second half of the matrix!! It leads
         # to basically zero error.
-        J_transform_wrt_twist       = np.hstack((J_transform_wrt_omega, -R.transpose()))
-        # J_transform_wrt_twist       = np.hstack((J_transform_wrt_omega, -np.eye(3)))
+        # J_transform_wrt_twist       = np.hstack((J_transform_wrt_omega, -R.transpose()))
+
+        J_transform_wrt_twist       = np.hstack((skew(P), -np.eye(3)))
+
         J_transform_wrt_delta_3d    = R.transpose()
         assert J_proj_wrt_P.shape == (2, 3)
         assert J_transform_wrt_twist.shape == (3, 6)

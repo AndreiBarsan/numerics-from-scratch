@@ -47,6 +47,7 @@ def rotate(points, rot_vecs):
 
     theta = np.linalg.norm(rot_vecs, axis=1)[:, np.newaxis]
 
+    # TODO(andrei): Happen tiny angle cases differently, like Ceres.
     eps = 1e-8
     count = np.sum(theta <= eps)
     if count > 0:
