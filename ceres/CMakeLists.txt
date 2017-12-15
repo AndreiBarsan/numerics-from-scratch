@@ -7,8 +7,9 @@ include_directories(${CERES_INCLUDE_DIRS})
 
 set(CMAKE_CXX_STANDARD 17)
 
-# Nothing here yet...
 set(COMMON_SOURCE_FILES BALProblem.h)
+
+SET(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -O3 -fPIC -msse3")
 
 add_executable(hello ${COMMON_SOURCE_FILES} hello_ceres_nonlin_lsq.cpp)
 add_executable(hello_ceres ${COMMON_SOURCE_FILES} hello_ceres.cpp)
