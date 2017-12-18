@@ -86,19 +86,19 @@ private:
             aa_rot_new[1] = -parameters_[cam_idx + 1];
             aa_rot_new[2] = -parameters_[cam_idx + 2];
 
-            printf("Camera %d translation: %.4lf %.4lf %.4lf.\n", i, t_raw[0], t_raw[1], t_raw[2]);
-            printf("Camera %d rotation: %.4lf %.4lf %.4lf.\n", i,
-                   -aa_rot_new[0], -aa_rot_new[1], -aa_rot_new[2]);
+//            printf("Camera %d translation: %.4lf %.4lf %.4lf.\n", i, t_raw[0], t_raw[1], t_raw[2]);
+//            printf("Camera %d rotation: %.4lf %.4lf %.4lf.\n", i,
+//                   -aa_rot_new[0], -aa_rot_new[1], -aa_rot_new[2]);
 
             double t_rotated[3];
             ceres::AngleAxisRotatePoint(aa_rot_new, t_raw, t_rotated);
 
-            // Write back the new rotation
+            // Write back the new rotation (R')
             parameters_[cam_idx + 0 + 0] = aa_rot_new[0];
             parameters_[cam_idx + 0 + 1] = aa_rot_new[1];
             parameters_[cam_idx + 0 + 2] = aa_rot_new[2];
 
-            // Write back the new translation
+            // Write back the new translation -(R' t)
             parameters_[cam_idx + 3 + 0] = -t_rotated[0];
             parameters_[cam_idx + 3 + 1] = -t_rotated[1];
             parameters_[cam_idx + 3 + 2] = -t_rotated[2];
