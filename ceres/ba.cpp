@@ -25,8 +25,8 @@ using ceres::Solver;
 // TODO(andrei): Check out the NIST example!!
 
 template <typename T>
-bool compute_residual(const T observed_x, const T observed_y, const T *camera, const T *point, const T *residuals,
-                      bool enable_radial, bool reparametrized) const {
+bool compute_residual(const double observed_x, const double observed_y, const T *camera, const T *point, T *residuals,
+                      bool enable_radial, bool reparametrized) {
     // camera[0, 1, 2] represent the rotation (angle-axis);
     // Pc = R ( Pw + c )
     T p[3];
@@ -109,7 +109,7 @@ struct TestParams {
 
 struct SnavelyCostFunction : public ceres::SizedCostFunction<2, 9, 3> {
 public:
-    virtual ~SnavelyCostFunction() {}
+    virtual ~SnavelyCostFunction() = default;
 
 //    virtual bool Evaluate(double const* camera, double const* point, double *residuals, double **jacobians) {
     virtual bool Evaluate(double const* const* params, double *residuals, double **jacobians) const override {
@@ -224,12 +224,13 @@ SummaryPtr solve_almost_not_toy_ba(const TestParams &test_params) {
 int main(int argc, char **argv) {
     google::InitGoogleLogging(argv[0]);
     google::SetStderrLogging(google::INFO);
-    auto hc_jacobians = {true, false};
+
+    auto handcrafted_jacobians = {true, false};
     auto reparam = {true, false};
     auto enable_radial = {true, false};
 
     vector<SummaryPtr> results;
-    for (auto hc_jacobian : hc_jacobians) {
+    for (auto hc_jacobian : handcrafted_jacobians) {
         for (auto rep : reparam) {
             for (auto rad : enable_radial) {
                 TestParams tp(rad, rep, hc_jacobian);

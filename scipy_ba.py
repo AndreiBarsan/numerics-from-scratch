@@ -417,19 +417,10 @@ def jac_clean(params, n_cameras, n_points, camera_indices, point_indices, points
 
     # i = np.arange(camera_indices.size)
 
+    # TODO(andrei): This looks VERY redundant.
     camera_params = params[:n_cameras * 9].reshape((n_cameras, 9))
     points_3d = params[n_cameras * 9:].reshape((n_points, 3))
     points_proj = project(points_3d[point_indices], camera_params[camera_indices], transform_mode)
-
-    # Used to verify that 'numeric_jacobian' works correctly. It does (but it's
-    # very slow, as expected for something implemented almost entirely in pure
-    # Python).
-    # print("Actually doing (naive) numeric Jacobian evaluation.")
-    # def fun_proxy(xxx):
-    #     return fun(xxx, n_cameras, n_points, camera_indices,
-    #                point_indices, points_2d, transform_mode, check=False)
-    # num_jac = numeric_jacobian(fun_proxy, params)
-    # return csr_matrix(num_jac)
 
     # Even for two frames the jacobian is 3400x4000, so 1.2M parameters...
     # Yes, mostly empty, but still...
@@ -471,16 +462,17 @@ def jac_clean(params, n_cameras, n_points, camera_indices, point_indices, points
         # J_transform_wrt_omega = skew(P)
         #
         # NOPE PILE
-        J_transform_wrt_omega = eye(3)
+        # J_transform_wrt_omega = eye(3)
         # J_transform_wrt_omega = skew(P_world)
         # J_transform_wrt_omega = np.dot(R.transpose(), skew(P_world))
+        # J_transform_wrt_omega = np.dot(-R.transpose(), skew(P_world))
         # J_transform_wrt_omega = np.dot(R, skew(P_world))
         # J_transform_wrt_omega = skew(np.dot(R, P_world))
         # J_transform_wrt_omega = skew(-np.dot(R, P_world))
         # J_transform_wrt_omega = -skew(np.dot(R, P_world))
         # J_transform_wrt_omega = skew(np.dot(R.transpose(), P_world))
         # J_transform_wrt_omega = skew(np.dot(R, P)) Almost OK
-        # J_transform_wrt_omega = skew(np.dot(R.transpose(), P))   Almost OK
+        J_transform_wrt_omega = skew(np.dot(R.transpose(), P))   # Almost OK
         # J_transform_wrt_omega = np.dot(R, skew(P))
         # J_transform_wrt_omega = np.dot(R.transpose(), skew(P))
         # J_transform_wrt_omega = skew(np.dot(-R.transpose(), P))
@@ -495,9 +487,9 @@ def jac_clean(params, n_cameras, n_points, camera_indices, point_indices, points
         # some relevant stuff but I need to read more carefully. -R.transpose()
         # is the correct derivative of the second half of the matrix!! It leads
         # to basically zero error.
-        # J_transform_wrt_twist       = np.hstack((J_transform_wrt_omega, -R.transpose()))
+        J_transform_wrt_twist       = np.hstack((J_transform_wrt_omega, -R.transpose()))
 
-        J_transform_wrt_twist       = np.hstack((skew(P), -np.eye(3)))
+        # J_transform_wrt_twist       = np.hstack((skew(P), -np.eye(3)))
 
         J_transform_wrt_delta_3d    = R.transpose()
         assert J_proj_wrt_P.shape == (2, 3)
@@ -547,19 +539,16 @@ def jac_clean(params, n_cameras, n_points, camera_indices, point_indices, points
         def fun_proxy(xxx):
             return fun(xxx, n_cameras, n_points, camera_indices,
                        point_indices, points_2d, transform_mode, check=False)
+        def jac_proxy(jxx):
+            return jac_clean(jxx, n_cameras, n_points, camera_indices,
+                             point_indices, points_2d, transform_mode, check_jacobians=False)
+
         print("[jac][check] Estimating Jacobian numerically...")
         # Estimate the Jacobian numerically using a function built into SciPy
         # (but which is tricky to find since it's not part of the public API).
         A = ba_sparsity(n_cameras, n_points, camera_indices, point_indices)
         num_jac = approx_derivative(fun_proxy, params, sparsity=A)
-        print("[jac][check] Numeric Jacobian shape: {} | Our shape: {}".format(
-            num_jac.shape, J_csr.shape
-        ))
         show_delta = True
-
-        def jac_proxy(jxx):
-            return jac_clean(jxx, n_cameras, n_points, camera_indices,
-                             point_indices, points_2d, transform_mode, check_jacobians=False)
 
         # As of dec 13, I'm getting like 5-6 on this, so my Jacobian is
         # definitely NOT correct.

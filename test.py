@@ -147,8 +147,8 @@ class TestAnalyticalJacobian(unittest.TestCase):
             'max_nfev': 15,
         }
 
-        result_num = solve(get_dataset(), analytic_jacobian=False, **args)
         result_ana = solve(get_dataset(), analytic_jacobian=True, **args)
+        result_num = solve(get_dataset(), analytic_jacobian=False, **args)
 
         delta_error = abs(result_num.cost - result_ana.cost)
         error_eps = 1e-3 * get_dataset().get_2d_point_count()
