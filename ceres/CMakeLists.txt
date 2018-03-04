@@ -3,7 +3,9 @@ project(ceres)
 
 # This automatically adds dependencies on Eigen, SuiteSparse, etc.
 find_package(Ceres REQUIRED)
+find_package(Sophus REQUIRED)
 include_directories(${CERES_INCLUDE_DIRS})
+add_subdirectory(third_party/Sophus)
 
 set(CMAKE_CXX_STANDARD 17)
 
@@ -21,4 +23,6 @@ target_link_libraries(hello ${CERES_LIBRARIES})
 target_link_libraries(hello_ceres ${CERES_LIBRARIES})
 target_link_libraries(powell ${CERES_LIBRARIES})
 target_link_libraries(nonlin_lsq ${CERES_LIBRARIES})
+
 target_link_libraries(ba ${CERES_LIBRARIES})
+target_link_libraries(ba sophus)

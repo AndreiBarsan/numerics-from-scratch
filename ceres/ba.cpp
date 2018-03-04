@@ -2,6 +2,10 @@
 #include <memory>
 #include <string>
 
+#include <Eigen/Eigen>
+#include "third_party/Sophus/sophus/so3.hpp"
+#include "third_party/Sophus/sophus/se3.hpp"
+
 #include <ceres/ceres.h>
 #include <ceres/rotation.h>
 #include <glog/logging.h>
@@ -17,6 +21,8 @@ using ceres::Problem;
 using ceres::Solve;
 using ceres::Solver;
 
+// TODO(andrei): Very important: once you implement the analytic jacobians, use check_gradients!
+// See: https://groups.google.com/forum/#!topic/ceres-solver/QMjKE7y5Q7M
 
 // TODO(andrei): Consider experimenting with Ceres...
 // Ya know, I could just implement my Jacobian in Ceres and see if it works, easily comparing it with the autodiff one,
@@ -24,41 +30,46 @@ using ceres::Solver;
 
 // TODO(andrei): Check out the NIST example!!
 
-template <typename T>
-bool compute_residual(const double observed_x, const double observed_y, const T *camera, const T *point, T *residuals,
-                      bool enable_radial, bool reparametrized) {
-    // camera[0, 1, 2] represent the rotation (angle-axis);
-    // Pc = R ( Pw + c )
-    T p[3];
-
+template<typename T>
+void transform_point(const T* camera, const T* point_world, bool reparametrized, T* result) {
     if (reparametrized) {
         // p = R'(p - t)
         // Translate first
-        p[0] = point[0] - camera[3];
-        p[1] = point[1] - camera[4];
-        p[2] = point[2] - camera[5];
+        result[0] = point_world[0] - camera[3];
+        result[1] = point_world[1] - camera[4];
+        result[2] = point_world[2] - camera[5];
 
-        // Then rotate (using the transpose of the rortation matrix)
+        // Then rotate (using the transpose of the rotation matrix)
         T neg_axis_angle[3];
         neg_axis_angle[0] = -camera[0];
         neg_axis_angle[1] = -camera[1];
         neg_axis_angle[2] = -camera[2];
         T p_cpy[3];
-        p_cpy[0] = p[0];
-        p_cpy[1] = p[1];
-        p_cpy[2] = p[2];
-        AngleAxisRotatePoint(neg_axis_angle, p_cpy, p);
+        p_cpy[0] = result[0];
+        p_cpy[1] = result[1];
+        p_cpy[2] = result[2];
+        AngleAxisRotatePoint(neg_axis_angle, p_cpy, result);
     }
     else {
         // p = Rp + t
         // Rotate the point
-        AngleAxisRotatePoint(camera, point, p);
+        AngleAxisRotatePoint(camera, point_world, result);
 
         // Apply the translation
-        p[0] += camera[3];
-        p[1] += camera[4];
-        p[2] += camera[5];
+        result[0] += camera[3];
+        result[1] += camera[4];
+        result[2] += camera[5];
     }
+}
+
+template <typename T>
+bool compute_reprojection_residual(const double observed_x, const double observed_y, const T *camera, const T *point_world,
+                                   T *residuals,
+                                   bool enable_radial, bool reparametrized) {
+    // camera[0, 1, 2] represents the rotation (angle-axis);
+    // Pc = R ( Pw + c )
+    T p[3];
+    transform_point(camera, point_world, reparametrized, p);
 
     // Apply the projection
     //   The sign change comes from the camera model assumed by the
@@ -107,26 +118,131 @@ struct TestParams {
                                                                                             handcrafted_jacobian) {}
 };
 
+using Matrix34d = Eigen::Matrix<double, 3, 4>;
+using Matrix23d = Eigen::Matrix<double, 2, 3>;
+using Vector7d = Eigen::Matrix<double, 1, 7>;
+
+Matrix23d jac_pproj(const Eigen::Vector3d &P) {
+    double Px = P[0];
+    double Py = P[1];
+    double Pz = P[2];
+
+    double Pz2 = Pz * Pz;
+
+    Matrix23d jac;
+    jac << -1.0 / Pz,       0.0, Px / Pz2,
+                 0.0, -1.0 / Pz, Py / Pz2;
+
+    return jac;
+};
+
+Eigen::Matrix3d skew(Eigen::Vector3d x) {
+    Eigen::Matrix3d res;
+    res <<     0,  -x[2],   x[1],
+            x[2],      0,  -x[0],
+           -x[1],   x[0],      0;
+    return res;
+}
+
+
+
 struct SnavelyCostFunction : public ceres::SizedCostFunction<2, 9, 3> {
 public:
+    SnavelyCostFunction(double observed_x, double observed_y, bool enable_radial, bool reparametrize) : observed_x(
+            observed_x), observed_y(observed_y), enable_radial(enable_radial), reparametrize(reparametrize) {}
+
     virtual ~SnavelyCostFunction() = default;
 
-//    virtual bool Evaluate(double const* camera, double const* point, double *residuals, double **jacobians) {
     virtual bool Evaluate(double const* const* params, double *residuals, double **jacobians) const override {
 
         cout << "Evaluate()" << endl;
+        if (this->enable_radial) {
+            cout << "Radial distortion optimization not yet supported. Skipping." << endl;
+            return true;
+        }
 
-        // TODO(andrei): Code from SnavelyReprojectionError(), do not duplicate it.
+        assert(this->parameter_block_sizes().size() == 2);
 
-        if (jacobians != nullptr && jacobians[0] != nullptr) {
-            cout << "Computing analytical Jacobian over here!" << endl;
+        // We operate on a per-residual-block basis. And since a residual block has two parameter blocks, there are two
+        // entries, in the params array. In other words, this function is called for every (observation, parameter-block)
+        // combination, computing the residual for one observation of one 3D point in one camera.
+        const double* camera = params[0];
+        const double* point = params[1];
 
-            // TODO(andrei): Implement analytical Jacobian, even if it means
-            // doing a lot of work with Eigen matrices.
+        // Can use this if sizes are not known in advance.
+        // auto sizes = this->parameter_block_sizes();
+
+        compute_reprojection_residual(
+                this->observed_x,
+                this->observed_y,
+                camera,
+                point,
+                residuals,
+                this->enable_radial,
+                this->reparametrize
+        );
+
+        if (jacobians != nullptr) {
+            const double *jac_cam = jacobians[0];
+            const double *jac_point = jacobians[1];
+
+            double f = camera[6];
+
+            double point_in_cam_frame_raw[3] = {0, 0, 0};
+            transform_point<double>(camera, point, this->reparametrize, point_in_cam_frame_raw);
+
+            Eigen::Vector3d point_in_cam_frame;
+            point_in_cam_frame << point_in_cam_frame_raw[0], point_in_cam_frame_raw[1], point_in_cam_frame_raw[2];
+
+            Eigen::Vector2d point_projected;
+            point_projected << point_in_cam_frame[0] / point_in_cam_frame[2],
+                               point_in_cam_frame[1] / point_in_cam_frame[2];
+
+            Matrix23d J_proj_wrt_P = jac_pproj(point_in_cam_frame);
+            if (jac_cam != nullptr) {
+                cout << "Computing an-Jac of camera." << endl;
+
+                // TODO(andrei): Use the absolute latest version from the Python version.
+                Eigen::Matrix3d J_trans_wrt_omega = skew(point_in_cam_frame);
+                Eigen::Matrix3d J_trans_wrt_nu;
+                J_trans_wrt_nu.setIdentity();
+                J_trans_wrt_nu *= -1;
+
+                Eigen::Matrix<double, 3, 6> J_transform_wrt_twist;
+                J_transform_wrt_twist << J_trans_wrt_omega, J_trans_wrt_nu;
+
+                Eigen::Matrix<double, 2, 7> J;
+                // TODO(andrei): Implement analytical Jacobian, even if it means
+                // doing a lot of work with Eigen matrices.
+
+                auto h1 = f * J_proj_wrt_P * J_transform_wrt_twist;
+                // TODO set jacobian
+                auto h3 = point_projected;
+            }
+
+            if (jac_point != nullptr) {
+                cout << "Computing an-Jac of 3D point." << endl;
+
+                Eigen::Vector3d omega;
+                omega << camera[0], camera[1], camera[2];
+                Eigen::Matrix3d R = Sophus::SO3d::exp(omega).matrix();
+
+                Eigen::Matrix3d J_transform_wrt_delta_3d = R.transpose();
+
+                auto h2 = f * J_proj_wrt_P * J_transform_wrt_delta_3d;
+
+                // TODO set jacobian
+            }
         }
 
         return true;
     }
+
+
+    double observed_x;
+    double observed_y;
+    bool enable_radial;
+    bool reparametrize;
 };
 
 
@@ -143,7 +259,8 @@ struct SnavelyReprojectionError {
     // Note that this whole method *is diffable*, thanks to the 'AngleAxisRotatePoint' helper!
     template <typename T>
     bool operator()(const T* const camera, const T* const point, T* residuals) const {
-        return compute_residual(observed_x, observed_y, camera, point, residuals, enable_radial, reparametrized);
+        return compute_reprojection_residual(observed_x, observed_y, camera, point, residuals, enable_radial,
+                                             reparametrized);
     }
 
     static ceres::CostFunction* Create(const double observed_x,
@@ -153,7 +270,8 @@ struct SnavelyReprojectionError {
         // Two residuals and two param blocks, with 9 (camera) and 3 (3D point) params, respectively,
         // hence the 2, 9, 3 template args.
         if (test_params.handcrafted_jacobian) {
-            return new SnavelyCostFunction();
+            return new SnavelyCostFunction(observed_x, observed_y, test_params.enable_radial,
+                                           test_params.reparametrize);
         }
         else {
             return new ceres::AutoDiffCostFunction<SnavelyReprojectionError, 2, 9, 3>(
@@ -211,7 +329,7 @@ SummaryPtr solve_almost_not_toy_ba(const TestParams &test_params) {
     // The iterative Shur one seems the best in Ceres. No idea if it would be implementable and diffable in TensorFlow.
     options.linear_solver_type = ceres::DENSE_SCHUR;
     options.minimizer_progress_to_stdout = true;
-    options.num_threads = 6;
+    options.num_threads = 1;
     options.max_num_iterations = 100;
     auto summary = make_shared<ceres::Solver::Summary>();
     ceres::Solve(options, &problem, summary.get());

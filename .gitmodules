@@ -1,0 +1,3 @@
+[submodule "ceres/third_party/Sophus"]
+	path = ceres/third_party/Sophus
+	url = https://github.com/strasdat/Sophus
