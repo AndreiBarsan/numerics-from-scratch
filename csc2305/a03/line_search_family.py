@@ -1,12 +1,19 @@
 """Simple gradient descent implementation."""
 
-import numpy as np
-import scipy.linalg as spla
+import sys
+from abc import ABCMeta, abstractmethod
 
 import matplotlib.pyplot as plt
-import sys
+import numpy as np
 
-from abc import ABCMeta, abstractmethod
+
+def is_spd(A):
+    """Checks whether the given matrix is symmetric positive-definite."""
+    try:
+        np.linalg.cholesky(A)
+        return True
+    except np.linalg.LinAlgError:
+        return False
 
 
 class C2Function:
@@ -105,7 +112,7 @@ class OptimizationResults:
         self.values.append(value)
 
 
-# TODO(andreib): Document.
+# TODO(andreib): Document with references to the book.
 def backtracking_line_search(func, x, alpha_0, p, c, rho):
     alpha = alpha_0
     f_x = func(x)
@@ -133,6 +140,7 @@ def steepest_descent(func, x_0, alpha_0, f_star_gt):
     x = x_0
     convergence_epsilon = 1e-8
     step_size = alpha_0
+    print_every_k = 100
 
     results = OptimizationResults(
         x_0=x_0,
@@ -163,7 +171,7 @@ def steepest_descent(func, x_0, alpha_0, f_star_gt):
             raise ValueError("Something blew up!")
         results.record(x_next, f_next)
 
-        if (iteration + 1) % 1 == 0:
+        if (iteration + 1) % print_every_k == 0:
             print("Iteration {} | fval = {:.4f}".format(iteration, f_next))
 
         x = x_next
@@ -210,6 +218,85 @@ def newton(func, x_0, alpha_0, f_star_gt):
     return x, results
 
 
+def bfgs(func, x_0, alpha_0, f_star_gt):
+    """Implements the quasi-newton BFGS optimization method from [NW].
+
+    References
+        [NW] Nocedal, J., & Wright, S. J. (2006). Numerical Optimization:
+        Springer Series in Operations Research and Financial Engineering.
+        Springer.
+    """
+    iteration = 0
+    x = x_0
+    # TODO(andrei): Make this 1e-8 again after you finish line search impl.
+    convergence_epsilon = 1e-6
+    step_size = alpha_0
+
+    # The approximate Hessian
+    B = np.eye(x_0.shape[0])
+
+    results = OptimizationResults(
+        x_0=x_0,
+        f_0=func(x_0),
+        known_optimum=f_star_gt)
+
+    while True:
+        iteration += 1
+
+        gval = func.gradient(x)
+
+        # TODO(andreib): Check secant condition (Have the code verify that ykT
+        # sk is always positive.)
+
+        direction = -np.dot(np.linalg.inv(B), gval)
+
+        # TODO(andrei): Implement the WC-based line search (zoom and friends).
+        # step_size = backtracking_line_search(func, x, step_size, direction, c=0.6, rho=0.9)
+        step_size = 0.0001
+
+        x_next = x + step_size * direction
+
+        # TODO(andreib): Gradient and hessian check!
+        if np.linalg.norm(x - x_next) < convergence_epsilon:
+            print("Converged in {} iterations.".format(iteration))
+            break
+
+        f_next = func(x_next)[0]
+        results.record(x_next, f_next)
+
+        # Update the Hessian approximation
+        # TODO(andrei): Fewer gradient evaluations.
+        s = (x_next - x).ravel()
+        y = (func.gradient(x_next) - gval).ravel()
+        B_s = np.dot(B, s)
+        # Implements equation (2.19) from [NW].
+        T_1 = np.outer(B_s, B_s) / np.dot(s, np.dot(B, s))
+        T_2 = np.outer(y, y) / np.dot(y, s)
+        print("Pre-BFGS update: {}".format(B.shape))
+        B = B - T_1 + T_2
+        assert T_1.shape == (2, 2)
+        assert T_2.shape == (2, 2)
+        assert B.shape == (2, 2)
+        print("Post-BFGS update: {}".format(B.shape))
+
+        print(s.shape)
+        print(y.shape)
+        print(np.dot(s, y).shape)
+
+        if np.dot(y, s) <= -1e-4:
+            raise ValueError("Secant condition check failed at iteration {}.".format(iteration))
+
+        if not is_spd(B):
+            raise ValueError("Hessian approximation became non-SPD at iteration {}!".format(iteration))
+
+        if (iteration + 1) % 1 == 0:
+            print("Iteration {} | fval = {:.4f}".format(iteration, f_next))
+
+        x = x_next
+
+    return x, results
+
+
 def f(x, y):
     # return rosenbrock(x, y)
     pass
@@ -240,15 +327,20 @@ def main():
 
     # TODO(andreib): Pretty plot starting point with label (easy/hard).
 
-    x_final_n, results_n = newton(func, x_0=x_0_easy, alpha_0=1.0, f_star_gt=f_star_gt)
-    plot_iterates(results_n, color='k', label='Newton, easy')
-    x_final_n, results_n = newton(func, x_0=x_0_hard, alpha_0=1.0, f_star_gt=f_star_gt)
-    plot_iterates(results_n, color='y', label='Newton, hard')
+    # x_final_n, results_n = newton(func, x_0=x_0_easy, alpha_0=1.0, f_star_gt=f_star_gt)
+    # plot_iterates(results_n, color='k', label='Newton, easy')
+    # x_final_n, results_n = newton(func, x_0=x_0_hard, alpha_0=1.0, f_star_gt=f_star_gt)
+    # plot_iterates(results_n, color='y', label='Newton, hard')
+    #
+    # x_final_sd_e, results_sd_e = steepest_descent(func, x_0=x_0_easy, alpha_0=1.0, f_star_gt=f_star_gt)
+    # plot_iterates(results_sd_e, color='b', stride=25, label='SD, easy (subsampled iterates)')
+    # x_final_sd_h, results_sd_h = steepest_descent(func, x_0=x_0_hard, alpha_0=1.0, f_star_gt=f_star_gt)
+    # plot_iterates(results_sd_h, color='r', stride=25, label='SD, hard (subsampled iterates)')
 
-    x_final_sd_e, results_sd_e = steepest_descent(func, x_0=x_0_easy, alpha_0=1.0, f_star_gt=f_star_gt)
-    plot_iterates(results_sd_e, color='b', stride=25, label='SD, easy (subsampled iterates)')
-    x_final_sd_h, results_sd_h = steepest_descent(func, x_0=x_0_hard, alpha_0=1.0, f_star_gt=f_star_gt)
-    plot_iterates(results_sd_h, color='r', stride=25, label='SD, hard (subsampled iterates)')
+    x_final_bfgs, results_bfgs = bfgs(func, x_0=x_0_easy, alpha_0=1.0, f_star_gt=f_star_gt)
+    plot_iterates(results_bfgs, color='g', stride=1500, label="BFGS, easy")
+    x_final_bfgs, results_bfgs = bfgs(func, x_0=x_0_hard, alpha_0=1.0, f_star_gt=f_star_gt)
+    plot_iterates(results_bfgs, color='g', stride=1500, label="BFGS, hard")
 
     plt.xlim(xlim)
     plt.ylim(ylim)
