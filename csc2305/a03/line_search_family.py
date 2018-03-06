@@ -13,9 +13,11 @@ from abc import ABCMeta, abstractmethod
 import matplotlib.pyplot as plt
 import numpy as np
 
-
+# List of things which could be improved:
+#
 # TODO-LOW(andrei): Organize code into "optimizer" class, and have a generic
 # "optimize" method. (TF and friends model)
+# TODO-LOW(andrei): Fewer gradient evaluations in the BFGS function.
 
 
 def is_spd(A):
@@ -102,10 +104,20 @@ class OptimizationResults:
         self.norm = norm
         self.iterates = [x_0]
         self.values = [f_0]
+        self.alphas = []
         self.ratios = []
         self.quad_ratios = []
 
-    def record(self, iterate, value):
+    def __getitem__(self, item):
+        if item == 0:
+            return self.iterates[item], self.values[item], None, None, None
+        else:
+            return self.iterates[item], self.values[item], self.alphas[item], self.ratios[item], self.quad_ratios[item]
+
+    def __len__(self):
+        return len(self.iterates)
+
+    def record(self, iterate, value, alpha):
         if len(self.iterates) == 0:
             raise ValueError("record() must be called after x_0 and f_0 are "
                              "recorded.")
@@ -121,10 +133,11 @@ class OptimizationResults:
         self.quad_ratios.append(ratio_quad)
         self.iterates.append(iterate)
         self.values.append(value)
+        self.alphas.append(value)
 
 
-# TODO(andreib): Document with references to the book.
 def backtracking_line_search(func, x, alpha_0, p, c, rho):
+    """Implements Algorithm 3.1 from [NW]."""
     alpha = alpha_0
     f_x = func(x)
     dot_grad_p = np.dot(func.gradient(x).T, p)[0, 0]
@@ -141,6 +154,7 @@ def backtracking_line_search(func, x, alpha_0, p, c, rho):
             raise ValueError("Exceeded max number of BTLS iterations")
 
     return alpha
+
 
 def get_phi(func, x, p):
     def phi(alpha):
@@ -166,6 +180,7 @@ def poor_mans_interpolate(a_lo, a_hi):
 
 def interpolate(func, x, p, a_lo, a_hi, c1):
     """Finds a trial step length in [a_lo, a_hi].
+    Not in use at the moment, since the simpler version was flagged as acceptable.
 
     Based on the methods from Chapter 3 of [NW].
     """
@@ -260,38 +275,40 @@ def wolfe_search(func, x, p, alpha_0, c1, c2, **kw):
     Algorithm 3.5 from [NW].
     """
     a_0 = 0.0
-    i = 1
-    max_its = 10        # As suggested on p.62 from [NW].
+    max_its = 10        # As suggested on p.62 from [NW]
     phi, phi_prime = get_phi(func, x, p)
     phi_0 = phi(0.0)
     phi_prime_0 = phi_prime(0.0)
 
-    a_growth_factor = kw.get('a_growth_factor', 4.0)
+    i = 1
+    a_growth_factor = kw.get('a_growth_factor', 10.0)
     a_i = a_1 = kw.get('a_1', 0.01)
     a_prev = a_0
+    verbose = kw.get('verbose', False)
 
     while True:
-        print("Wolfe search it {}. a_{} = {:.4f}".format(i, i, a_i))
+        if verbose: print("Wolfe search it {}. a_{} = {:.4f}".format(i, i, a_i))
         phi_a_i = phi(a_i)
-        # print("Check 1: {} > {}".format(phi_a_i, phi_0 + c1 * a_i * phi_prime_0))
+
         if phi_a_i > phi_0 + c1 * a_i * phi_prime_0 or (phi(a_i) >= phi(a_prev) and i > 1):
-            print("wolfe_search: returning zoom (A) at iteration {}".format(i))
+            if verbose: print("wolfe_search: returning zoom (A) at iteration {}".format(i))
             return zoom(func, x, p, a_prev, a_i, c1, c2)
 
         phi_prime_a_i = phi_prime(a_i)
-        # print("Check 2: {} <= {}".format(math.fabs(phi_prime_a_i), -c2 * phi_prime_0))
+
         if math.fabs(phi_prime_a_i) <= -c2 * phi_prime_0:
-            print("wolfe_search: returning a_i = {} at iteration {}".format(a_i, i))
+            if verbose: print("wolfe_search: returning a_i = {} at iteration {}".format(a_i, i))
             return a_i
 
         if phi_prime_a_i >= 0.0:
-            print("wolfe_search: returning zoom (B) at iteration {}".format(i))
+            if verbose: print("wolfe_search: returning zoom (B) at iteration {}".format(i))
             return zoom(func, x, p, a_i, a_prev, c1, c2)
 
         i += 1
         if i >= max_its:
-            print("wolfe_search: WARNING maximum number of iterations reached. "
-                  "Returning possibly suboptimal a_i = {}".format(a_i))
+            if verbose: print("wolfe_search: WARNING maximum number of "
+                              "iterations reached. Returning possibly "
+                              "suboptimal a_i = {}".format(a_i))
             return a_i
 
         a_prev = a_i
@@ -300,6 +317,7 @@ def wolfe_search(func, x, p, alpha_0, c1, c2, **kw):
 
 
 def steepest_descent(func, x_0, alpha_0, f_star_gt):
+    """Implements the steepest descent method introduced in [NW] Chapter 2."""
     iteration = 0
     x = x_0
     convergence_epsilon = 1e-8
@@ -308,7 +326,7 @@ def steepest_descent(func, x_0, alpha_0, f_star_gt):
 
     results = OptimizationResults(
         x_0=x_0,
-        f_0=func(x_0),
+        f_0=func(x_0)[0],
         known_optimum=f_star_gt)
 
     while True:
@@ -340,7 +358,7 @@ def steepest_descent(func, x_0, alpha_0, f_star_gt):
         f_next = func(x_next)[0]
         if np.isnan(f_next):
             raise ValueError("Something blew up!")
-        results.record(x_next, f_next)
+        results.record(x_next, f_next, step_size)
 
         if (iteration + 1) % print_every_k == 0:
             print("Iteration {} | fval = {:.4f}".format(iteration, f_next))
@@ -351,22 +369,20 @@ def steepest_descent(func, x_0, alpha_0, f_star_gt):
 
 
 def newton(func, x_0, alpha_0, f_star_gt):
+    """Implements the Newton method introduced in [NW] Chapter 2."""
     iteration = 0
     x = x_0
     convergence_epsilon = 1e-8
     step_size = alpha_0
 
-    # TODO(andrei): always start with a_0 = 1 for Newton and QN.
-
     results = OptimizationResults(
         x_0=x_0,
-        f_0=func(x_0),
+        f_0=func(x_0)[0],
         known_optimum=f_star_gt)
 
     while True:
         iteration += 1
 
-        # TODO compute with line search
         hval = func.hessian(x)
         gval = func.gradient(x)
 
@@ -375,16 +391,16 @@ def newton(func, x_0, alpha_0, f_star_gt):
 
         x_next = x + step_size * direction
 
-        # TODO(andreib): Gradient and hessian check!
+        # TODO-LOW(andreib): Gradient and hessian check for extra sanity.
         if np.linalg.norm(x - x_next) < convergence_epsilon:
             print("Converged in {} iterations.".format(iteration))
             break
 
         f_next = func(x_next)[0]
-        results.record(x_next, f_next)
+        results.record(x_next, f_next, step_size)
 
-        if (iteration + 1) % 1 == 0:
-            print("Iteration {} | fval = {:.4f}".format(iteration, f_next))
+        # if (iteration + 1) % 1 == 0:
+        #     print("Newton iteration {:03d} | fval = {:.4f} ".format(iteration, f_next))
 
         x = x_next
 
@@ -392,20 +408,17 @@ def newton(func, x_0, alpha_0, f_star_gt):
 
 
 def bfgs(func, x_0, alpha_0, f_star_gt):
-    """Implements the quasi-newton BFGS optimization method from [NW].
-    """
+    """Implements the quasi-newton BFGS optimization method from [NW]."""
     iteration = 0
     x = x_0
-    # TODO(andrei): Make this 1e-8 again after you finish line search impl.
     convergence_epsilon = 1e-8
-    step_size = alpha_0
 
     # The approximate Hessian
     B = np.eye(x_0.shape[0])
 
     results = OptimizationResults(
         x_0=x_0,
-        f_0=func(x_0),
+        f_0=func(x_0)[0],
         known_optimum=f_star_gt)
 
     while True:
@@ -413,26 +426,17 @@ def bfgs(func, x_0, alpha_0, f_star_gt):
 
         gval = func.gradient(x)
         direction = -np.dot(np.linalg.inv(B), gval)
-
-        # TODO(andrei): Implement the WC-based line search (zoom and friends).
-        # step_size = backtracking_line_search(func, x, step_size, direction, c=0.6, rho=0.9)
-        # step_size = 0.0001
-        # The parameters given correspond to the "loose" line search described
-        # in the textbook.
         step_size = wolfe_search(func, x, direction, alpha_0, c1=0.1, c2=0.9)
-
         x_next = x + step_size * direction
 
-        # TODO(andreib): Gradient and hessian check!
         if np.linalg.norm(x - x_next) < convergence_epsilon:
             print("Converged in {} iterations.".format(iteration))
             break
 
         f_next = func(x_next)[0]
-        results.record(x_next, f_next)
+        results.record(x_next, f_next, step_size)
 
         # Update the Hessian approximation
-        # TODO(andrei): Fewer gradient evaluations.
         s = (x_next - x).ravel()
         y = (func.gradient(x_next) - gval).ravel()
         B_s = np.dot(B, s)
@@ -493,12 +497,17 @@ def main():
     start = time.time()
     x_final_sd_e, results_sd_e = steepest_descent(func, x_0=x_0_easy, alpha_0=1.0, f_star_gt=f_star_gt)
     delta_s = time.time() - start
+    print("Table for steepest descent easy")
+    output_table(results_sd_e)
     plot_iterates(results_sd_e, delta_s, color='b', stride=25, label='SD, easy')
     start = time.time()
     x_final_sd_h, results_sd_h = steepest_descent(func, x_0=x_0_hard, alpha_0=1.0, f_star_gt=f_star_gt)
+    print("Table for steepest descent hard")
+    output_table(results_sd_h)
     delta_s = time.time() - start
     plot_iterates(results_sd_h, delta_s, color='r', stride=25, label='SD, hard')
     plt.legend()
+    plt.savefig('conv.eps')
 
     # TODO(andreib): Pretty plot starting point with label (easy/hard).
     # Newton and Quasi-Newton
@@ -511,23 +520,56 @@ def main():
     x_final_n, results_n = newton(func, x_0=x_0_easy, alpha_0=1.0, f_star_gt=f_star_gt)
     delta_s = time.time() - start
     plot_iterates(results_n, delta_s, color='k', label='Newton, easy')
+    print("Table for newton easy")
+    output_table(results_n)
+
     start = time.time()
     x_final_n, results_n = newton(func, x_0=x_0_hard, alpha_0=1.0, f_star_gt=f_star_gt)
     delta_s = time.time() - start
     plot_iterates(results_n, delta_s, color='y', label='Newton, hard')
+    print("Table for newton hard")
+    output_table(results_n)
 
     start = time.time()
     x_final_bfgs, results_bfgs = bfgs(func, x_0=x_0_easy, alpha_0=1.0, f_star_gt=f_star_gt)
     delta_s = time.time() - start
     plot_iterates(results_bfgs, delta_s, color='g', stride=5, label="BFGS, easy")
+    print("Table for BFGS easy")
+    output_table(results_bfgs)
 
     start = time.time()
     x_final_bfgs, results_bfgs = bfgs(func, x_0=x_0_hard, alpha_0=1.0, f_star_gt=f_star_gt)
     delta_s = time.time() - start
     plot_iterates(results_bfgs, delta_s, color='m', stride=5, label="BFGS, hard")
     plt.legend()
+    plt.savefig('conv_second.eps')
+    print("Table for BFGS hard")
+    output_table(results_bfgs)
 
-    plt.show()
+    # Iterates, hard
+    plt.figure(30)
+    # q_sd =
+    q_n = results_n.ratios
+    q_bfgs = results_bfgs.ratios
+    plt.plot(np.arange(len(q_n)), q_n, 'k-', label="Ratios for Newton")
+    plt.plot(np.arange(len(q_bfgs)), q_bfgs, 'r-', label="Ratios for BFGS")
+    plt.xlabel("iteration (k)")
+    plt.ylabel("ratio")
+    plt.legend()
+    plt.savefig('ratios.eps')
+
+    plt.figure(31)
+    plt.plot(np.arange(len(q_n)), results_n.quad_ratios, 'k--', label="Quadratic ratios for Newton")
+    plt.plot(np.arange(len(q_bfgs)), results_bfgs.quad_ratios, 'r--', label="Quadratic ratios for BFGS")
+    plt.xlabel("iteration (k)")
+    plt.ylabel("quadratic ratio")
+    plt.legend()
+    plt.savefig('ratios_quad.eps')
+
+    # Quad Iterates, hard
+    # plt.figure(31)
+
+    # plt.show()
 
 
 def plot_rosenbrock_contours(contour_count, samples, xlim, ylim):
@@ -562,6 +604,22 @@ def plot_iterates(results, time_s, label, color, stride=1):
     plt.scatter([-1000], [-1000], color=color, label=label_full)
 
 
+def output_table(results, first=30, last=20):
+    def line(fval, i, x, alpha, r, rq):
+        print("| {:03d} | {:.4f}, {:.4f} | {:.4f} | {:4f} | {:4f} | {:4f} |".format(i, x[0][0], x[1][0], alpha, fval, r, rq))
+
+    print("| it  | x1, x2         | alpha   | fval     | ratio   | quad_ratio |")
+    print("|-----+----------------+---------+----------+---------+------------+")
+    sset = results
+    for i, (x, fval, alpha, r, r_q) in enumerate(sset):
+        if r is not None:
+            if len(results) > first + last:
+                if i <= first or i >= len(results) - last:
+                    line(fval, i, x, alpha, r, r_q)
+                elif i == first + 1:
+                    print("\n...\n")
+            else:
+                line(fval, i, x, alpha, r, r_q)
+
 if __name__ == '__main__':
-    # mayavi_demo()
     main()
