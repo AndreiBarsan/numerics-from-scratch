@@ -6,134 +6,24 @@ References
 """
 
 import math
-import sys
 import time
-from abc import ABCMeta, abstractmethod
 
 import matplotlib.pyplot as plt
 import numpy as np
 
 # List of things which could be improved:
 #
+# TODO(andrei): XXX This is important! There is a bug in the ratio computation
+# code. You are passing f* instead of x*, meaning that your ratios don't go to
+# infinity as you're approaching the solution. (I lost 2 marks in the assignment
+# because of this.)
 # TODO-LOW(andrei): Organize code into "optimizer" class, and have a generic
 # "optimize" method. (TF and friends model)
 # TODO-LOW(andrei): Fewer gradient evaluations in the BFGS function.
-
-
-def is_spd(A):
-    """Checks whether the given matrix is symmetric positive-definite."""
-    try:
-        np.linalg.cholesky(A)
-        return True
-    except np.linalg.LinAlgError:
-        return False
-
-
-class C2Function:
-    """Represents a twice continuously differentiable function."""
-    __metaclass__ = ABCMeta
-
-    @abstractmethod
-    def val(self, x):
-        pass
-
-    @abstractmethod
-    def gradient(self, x):
-        pass
-
-    @abstractmethod
-    def hessian(self, x):
-        pass
-
-
-def rosenbrock_sep(x, y):
-    """Used for plotting the contour lines."""
-    return 100 * (y - x ** 2) ** 2 + (1 - x) ** 2
-
-
-class Rosenbrock(C2Function):
-    """The Rosenbrock "banana" function.
-
-    A classic benchmark for optimization algorithms.
-    """
-
-    def val(self, x):
-        """Returns the scalar value of the function."""
-        return 100 * (x[1] - x[0] ** 2) ** 2 + (1 - x[0]) ** 2
-
-    def __call__(self, *args, **kwargs):
-        return self.val(*args)
-
-    def gradient(self, x):
-        """Returns a [2x1] gradient vector."""
-        return np.array([
-            [-400 * x[0] * x[1] + 400 * x[0] * x[0] * x[0] - 2 + 2 * x[0]],
-            [ 200 * x[1] - 200 * x[0] * x[0]]
-        ]).reshape(2, 1)
-
-    def hessian(self, x):
-        """Returns a [2x2] Hessian matrix."""
-        res = np.array([
-            [-400 * x[1] + 1200 * x[0] * x[0] + 2, -400 * x[0]],
-            [-400 * x[0],                           [200.0]]
-        ]).reshape(2, 2)
-
-        sys.stdout.flush()
-        return res
-
-
-def l2_norm(x):
-    return np.linalg.norm(x, ord=2)
-
-
-class OptimizationResults:
-    """Logs detailed information about an optimization procedure.
-
-    Attributes
-        known_optimum: The a priori known value of the global optimum of the
-                       function being optimized.
-        iterates: The parameter values over time.
-        values: The function values over time.
-        ratios: This and quad_ratios correspond to Equation (1) from the CSC2305
-                Assignment 03 handout.
-        quad_ratios: See above.
-    """
-
-    def __init__(self, known_optimum, x_0, f_0, norm=l2_norm):
-        self.known_optimum = known_optimum
-        self.norm = norm
-        self.iterates = [x_0]
-        self.values = [f_0]
-        self.alphas = []
-        self.ratios = []
-        self.quad_ratios = []
-
-    def __getitem__(self, item):
-        if item == 0:
-            return self.iterates[item], self.values[item], None, None, None
-        else:
-            return self.iterates[item], self.values[item], self.alphas[item], self.ratios[item], self.quad_ratios[item]
-
-    def __len__(self):
-        return len(self.iterates)
-
-    def record(self, iterate, value, alpha):
-        if len(self.iterates) == 0:
-            raise ValueError("record() must be called after x_0 and f_0 are "
-                             "recorded.")
-
-        previous = self.iterates[-1]
-        current_gap = self.norm(iterate - self.known_optimum)
-        previous_gap = self.norm(previous - self.known_optimum)
-
-        ratio = current_gap / previous_gap
-        ratio_quad = current_gap / (previous_gap ** 2)
-
-        self.ratios.append(ratio)
-        self.quad_ratios.append(ratio_quad)
-        self.iterates.append(iterate)
-        self.values.append(value)
-        self.alphas.append(value)
+from csc2305.functions import Rosenbrock
+from csc2305.optimizaion_results import OptimizationResults
+from csc2305.utils import is_spd, plot_rosenbrock_contours, \
+    plot_iterates, output_table
 
 
 def backtracking_line_search(func, x, alpha_0, p, c, rho):
@@ -571,55 +461,6 @@ def main():
 
     # plt.show()
 
-
-def plot_rosenbrock_contours(contour_count, samples, xlim, ylim):
-    x = np.linspace(xlim[0], xlim[1], samples)
-    y = np.linspace(ylim[0], ylim[1], samples)
-    X, Y = np.meshgrid(x, y)
-    Z = rosenbrock_sep(X, Y)
-    x_0_easy = np.array([1.2, 1.2]).reshape(2, 1)
-    x_0_hard = np.array([-1.2, 1.0]).reshape(2, 1)
-    x_0 = x_0_hard
-    # contour_vals_bkg = np.linspace(0.0, np.max(Z) * 0.75, contour_count * 10)
-    # cont_background = plt.contour(X, Y, Z, contour_vals_bkg, alpha=0.1)
-    contour_vals = np.linspace(0.0, np.max(Z) * 0.25, contour_count)
-    cont = plt.contour(X, Y, Z, contour_vals, alpha=0.5)
-    plt.colorbar(cont)
-    return x_0_easy, x_0_hard
-
-
-def plot_iterates(results, time_s, label, color, stride=1):
-    """Plots the iterates from the result onto the current plot."""
-    if len(results.iterates) <= 1:
-        raise ValueError("Insufficient iterates to plot!")
-    its_np = np.squeeze(np.array(results.iterates))
-    x_prev, y_prev = its_np[0, 0], its_np[0, 1]
-    for (x, y) in its_np[1::stride, :]:
-        plt.arrow(x_prev, y_prev, x - x_prev, y - y_prev,
-                  head_width=0.05, head_length=0.10, color=color)
-        x_prev, y_prev = x, y
-    # Hack to ensure there is a legend entry for the manually drawn iterates.
-    time_ms = int(time_s * 1000)
-    label_full = "{} ({} iterations, {}ms))".format(label, len(its_np), time_ms)
-    plt.scatter([-1000], [-1000], color=color, label=label_full)
-
-
-def output_table(results, first=30, last=20):
-    def line(fval, i, x, alpha, r, rq):
-        print("| {:03d} | {:.4f}, {:.4f} | {:.4f} | {:4f} | {:4f} | {:4f} |".format(i, x[0][0], x[1][0], alpha, fval, r, rq))
-
-    print("| it  | x1, x2         | alpha   | fval     | ratio   | quad_ratio |")
-    print("|-----+----------------+---------+----------+---------+------------+")
-    sset = results
-    for i, (x, fval, alpha, r, r_q) in enumerate(sset):
-        if r is not None:
-            if len(results) > first + last:
-                if i <= first or i >= len(results) - last:
-                    line(fval, i, x, alpha, r, r_q)
-                elif i == first + 1:
-                    print("\n...\n")
-            else:
-                line(fval, i, x, alpha, r, r_q)
 
 if __name__ == '__main__':
     main()
