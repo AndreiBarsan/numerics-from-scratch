@@ -22,15 +22,11 @@ def plot_rosenbrock_contours(contour_count, samples, xlim, ylim):
     y = np.linspace(ylim[0], ylim[1], samples)
     X, Y = np.meshgrid(x, y)
     Z = rosenbrock_sep(X, Y)
-    x_0_easy = np.array([1.2, 1.2]).reshape(2, 1)
-    x_0_hard = np.array([-1.2, 1.0]).reshape(2, 1)
-    x_0 = x_0_hard
     # contour_vals_bkg = np.linspace(0.0, np.max(Z) * 0.75, contour_count * 10)
     # cont_background = plt.contour(X, Y, Z, contour_vals_bkg, alpha=0.1)
     contour_vals = np.linspace(0.0, np.max(Z) * 0.25, contour_count)
     cont = plt.contour(X, Y, Z, contour_vals, alpha=0.5)
     plt.colorbar(cont)
-    return x_0_easy, x_0_hard
 
 
 def plot_iterates(results, time_s, label, color, stride=1):

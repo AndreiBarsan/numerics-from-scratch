@@ -370,14 +370,14 @@ def main():
     xlim = [-2.0, 2.0]
     ylim = [-0.5, 3.0]
     plt.figure(0)
-    x_0_easy, x_0_hard = plot_rosenbrock_contours(contour_count, samples, xlim,
-                                                  ylim)
+    plot_rosenbrock_contours(contour_count, samples, xlim, ylim)
+
+    x_0_easy = np.array([1.2, 1.2]).reshape(2, 1)
+    x_0_hard = np.array([-1.2, 1.0]).reshape(2, 1)
     func = Rosenbrock()
     x_star_gt = np.array([1.0, 1.0]).reshape((2, 1))
     f_star_gt = func(x_star_gt)
     plt.scatter(x_star_gt[0], x_star_gt[1], s=100, marker='*')
-
-    # TODO(andrei): Separate plots with ratios over time.
 
     # Steepest Descent
     f0 = plt.figure(0)
@@ -404,8 +404,7 @@ def main():
     f1 = plt.figure(1)
     plt.xlim(xlim)
     plt.ylim(ylim)
-    x_0_easy, x_0_hard = plot_rosenbrock_contours(contour_count, samples, xlim,
-                                                  ylim)
+    plot_rosenbrock_contours(contour_count, samples, xlim, ylim)
     start = time.time()
     x_final_n, results_n = newton(func, x_0=x_0_easy, alpha_0=1.0, f_star_gt=f_star_gt)
     delta_s = time.time() - start
@@ -455,9 +454,6 @@ def main():
     plt.ylabel("quadratic ratio")
     plt.legend()
     plt.savefig('ratios_quad.eps')
-
-    # Quad Iterates, hard
-    # plt.figure(31)
 
     # plt.show()
 
