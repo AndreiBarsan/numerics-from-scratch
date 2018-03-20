@@ -4,6 +4,7 @@ References
     [NW] Nocedal, J., & Wright, S. J. (2006). Numerical Optimization: Springer
     Series in Operations Research and Financial Engineering. Springer.
 """
+import os
 import time
 
 import matplotlib.pyplot as plt
@@ -136,8 +137,8 @@ def trust_region(func, x_0, x_gt, **kwargs):
     f_0 = func(x_0)
 
     # TODO experiment with these values a LOT
-    D_max = 0.50
-    D_0 = 0.01
+    D_max = 0.75
+    D_0 = 0.25
     # eta in the textbook
     update_threshold = 0.20
 
@@ -203,7 +204,7 @@ def main():
     samples = 500
     contour_count = 25
     xlim = [-2.0, 2.0]
-    ylim = [-0.5, 3.0]
+    ylim = [-0.5, 2.0]
     x_0_easy = np.array([1.2, 1.2]).reshape(2, 1)
     x_0_hard = np.array([-1.2, 1.0]).reshape(2, 1)
     plt.figure(figsize=(8, 8))
@@ -212,28 +213,37 @@ def main():
     plot_rosenbrock_contours(contour_count, samples, xlim, ylim)
     func = Rosenbrock()
     x_star_gt = np.array([1.0, 1.0]).reshape((2, 1))
-    # f_star_gt = func(x_star_gt)
-    plt.scatter(x_star_gt[0], x_star_gt[1], s=100, marker='*')
 
-
-    start = time.time()
+    iterate_stride = 1
+    start_t = time.time()
     x_final_sd_e, results_sd_e = trust_region(func, x_0=x_0_easy, x_gt=x_star_gt)
-    delta_s = time.time() - start
+    delta_s = time.time() - start_t
     # print("Table for dogleg easy")
     # output_table(results_sd_e)
     print(results_sd_e.iterates)
-    plot_iterates(results_sd_e, delta_s, color='b', stride=1, label='dogleg, easy')
+    plot_iterates(results_sd_e, delta_s, color='b', stride=iterate_stride, label='Dogleg, easy')
 
-    start = time.time()
+    start_t = time.time()
     x_final_sd_h, results_sd_h = trust_region(func, x_0=x_0_hard, x_gt=x_star_gt)
     # print("Table for dogleg hard")
     # output_table(results_sd_h)
-    delta_s = time.time() - start
-    plot_iterates(results_sd_h, delta_s, color='r', stride=25, label='SD, hard')
+    delta_s = time.time() - start_t
+    plot_iterates(results_sd_h, delta_s, color='r', stride=iterate_stride, label='Dogleg, hard')
+
+    plt.scatter(x_star_gt[0], x_star_gt[1], s=100, marker='*')
+    plt.scatter(x_0_easy[0], x_0_easy[1], s=75, c='b', marker='^')
+    plt.scatter(x_0_hard[0], x_0_hard[1], s=75, c='r', marker='^')
+
+    plt.annotate("Easy start",
+                 xy=(x_0_easy[0], x_0_easy[1]),
+                 xytext=(x_0_easy[0] + 0.2, x_0_easy[1] - 0.2),
+                 arrowprops=dict(facecolor='black', shrink=0.05,
+                                 width=0.25, headwidth=0.25))#, length_includes_head=True))
 
     plt.legend()
+    os.makedirs('figures', exist_ok=True)
+    plt.savefig('figures/dogleg-iterates.eps')
     plt.show()
-    # plt.savefig('dogleg-iterates.eps')
 
 
 if __name__ == '__main__':

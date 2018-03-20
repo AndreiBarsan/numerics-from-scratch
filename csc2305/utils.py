@@ -37,7 +37,8 @@ def plot_iterates(results, time_s, label, color, stride=1):
     x_prev, y_prev = its_np[0, 0], its_np[0, 1]
     for (x, y) in its_np[1::stride, :]:
         plt.arrow(x_prev, y_prev, x - x_prev, y - y_prev,
-                  head_width=0.05, head_length=0.10, color=color)
+                  head_width=0.033, head_length=0.050, overhang=0.5,
+                  length_includes_head=True, color=color)
         x_prev, y_prev = x, y
     # Hack to ensure there is a legend entry for the manually drawn iterates.
     time_ms = int(time_s * 1000)
