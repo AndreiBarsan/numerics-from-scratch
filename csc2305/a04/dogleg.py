@@ -14,7 +14,7 @@ import numpy as np
 from sklearn.externals import joblib
 
 from csc2305.functions import Rosenbrock
-from csc2305.optimizaion_results import OptimizationResults
+from csc2305.optimization_results import OptimizationResults
 from csc2305.utils import plot_rosenbrock_contours, plot_iterates, \
     l2_norm
 

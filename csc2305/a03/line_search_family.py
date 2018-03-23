@@ -21,7 +21,7 @@ import numpy as np
 # "optimize" method. (TF and friends model)
 # TODO-LOW(andrei): Fewer gradient evaluations in the BFGS function.
 from csc2305.functions import Rosenbrock
-from csc2305.optimizaion_results import OptimizationResults
+from csc2305.optimization_results import OptimizationResults
 from csc2305.utils import is_spd, plot_rosenbrock_contours, \
     plot_iterates, output_table
 
