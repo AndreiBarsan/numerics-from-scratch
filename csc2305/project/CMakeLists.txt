@@ -15,7 +15,7 @@ include_directories(${CERES_INCLUDE_DIRS})
 
 # We want to be bleeding-edge (native path support, stdlib multithreading, etc.)
 set(CMAKE_CXX_STANDARD 17)
-set(COMMON_SOURCE_FILES BALProblem.h CsvWriter.cpp BALProblem.cpp)
+set(COMMON_SOURCE_FILES BALProblem.h CsvWriter.cpp BALProblem.cpp Utils.cpp)
 SET(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -O3 -fPIC -msse3 -fopenmp")
 
 add_executable(ba ${COMMON_SOURCE_FILES} ba.cpp)

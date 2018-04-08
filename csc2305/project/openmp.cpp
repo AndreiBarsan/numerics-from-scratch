@@ -31,9 +31,8 @@ void openmp_loop() {
   LOG(INFO) << "Joined threads OK." << std::endl;
 
   long i;
-  float *a = new float[BIG];
-  float *b = new float[BIG];
-
+  auto *a = new float[BIG];
+  auto *b = new float[BIG];
 
 #pragma omp parallel for
   for (i = 0; i < BIG; ++i) {

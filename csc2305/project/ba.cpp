@@ -15,6 +15,7 @@
 
 #include "BALProblem.h"
 #include "CsvWriter.h"
+#include "Utils.h"
 
 using namespace std;
 using ceres::AngleAxisRotatePoint;
@@ -27,12 +28,14 @@ using ceres::Solver;
 
 DEFINE_string(dataset_root, "../data",
               "The root folder where the BAL datasets are present. (See 'get_data.py' for more info.)");
+DEFINE_string(output_dir, "../experiments/00", "Where to write experiment outputs.");
 DEFINE_string(problem_list,
               "trafalgar:ALL",
               "Indices of the problems to solve. The format should be 'nameA:1,2,..,n;nameB:1,2,...,m;...'. For "
                   "instance, 'trafalgar:1,3,5' runs the first, third, and fifth problems from the trafalgar set, while "
                   "'venice:ALL; trafalgar:2,5' runs all the venice sequences and sequences 2 and 5 from the trafalgar "
                   "set.");
+// TODO(andreib): Similar thing to problem_list, but for the optimizer configs.
 
 // TODO(andreib): Basic header with info about WTF is going on.
 
@@ -366,8 +369,9 @@ SummaryPtr SolveSimpleBA(const string &data_file_fpath, const ExperimentParams &
   return summary;
 }
 
-// TODO(andreib): Prolly the most flexible to just dump one file per one (config, dataset) pair. We'll end up with a
-// lot of files, but it's not a big deal. We can aggregate in Python OK.
+/// Dumps the output of a single experimental run into three files.
+/// The files are the main CSV results (all iterations), a metadata file, and the Ceres Summary::FullReport output.
+///
 void SaveResults(
     const std::string &out_dir,
     const std::string &dataset_name,
@@ -384,26 +388,18 @@ void SaveResults(
   const std::string fname_raw = fname_ss.str() + ".raw_summary.txt";
 
   const std::string fpath = out_dir + "/" + fname;
-  const std::string fpath_meta = out_dir + "/" + fname;
-  const std::string fpath_raw = out_dir + "/" + fname;
+  const std::string fpath_meta = out_dir + "/" + fname_meta;
+  const std::string fpath_raw = out_dir + "/" + fname_raw;
 
   if (FileExists(fpath)) {
-    LOG(ERROR) << "Results file [" << fpath << "] already exists. Not re-dumping." << std::endl;
-    return;
+    // TODO-LOW(andreib): Consider erroring out, or checking this in advance.
+    LOG(WARNING) << "Results file [" << fpath << "] already exists. Will overwrite." << std::endl;
   }
 
   LOG(INFO) << "Writing data to files:" << std::endl;
   LOG(INFO) << "\t" << fname << std::endl;
   LOG(INFO) << "\t" << fname_meta << std::endl;
   LOG(INFO) << "\t" << fname_raw << std::endl;
-
-  // Write all metadata you can to the meta file.
-  // Then, write all iterations to the "main" file.
-  // Then just dump the detailed summary to the raw file.
-
-  // Note that all iterations have an index, and a dataset name, and N_cameras, N points, etc., so you
-  // can easily distinguish different scenes. What about time? We have iter_time and total_time, so we can easily
-  // look at the last iteration's total time to see the method's wall time.
 
   ofstream out(fpath);
   ofstream out_meta(fpath_meta);
@@ -434,6 +430,47 @@ void SaveResults(
 
 }
 
+/// Solves every problem in the list using the given optimizer config and dumps the results to the given directory.
+void EvaluateOptimizerConfig(const string &dataset_root,
+                             const string &result_out_dir,
+                             const map<string, vector<int>> &problems,
+                             const ExperimentParams &config
+) {
+  // TODO(andreib): Use C++17 paths.
+  const string sequence = "trafalgar";
+  const string sequence_root = dataset_root + "/" + sequence + "/";
+
+  int i = 0;
+  for (const string &fname : kProblemFiles.at(sequence)) {
+    i++;
+    const vector<int> &sequence_problems = problems.at(sequence);
+    if (!sequence_problems.empty() &&
+        find(sequence_problems.cbegin(), sequence_problems.cend(), i) == sequence_problems.cend()) {
+      LOG(INFO) << "Skipping problem [" << i << "]...";
+      continue;
+    }
+
+    const string fpath = sequence_root + fname;
+    LOG(INFO) << "Experimenting on problem from file [" << fname << "].";
+
+    try {
+      auto result = SolveSimpleBA(fpath, config);
+
+      if (result == nullptr) {
+        LOG(ERROR) << "Error running experiment..." << endl;
+        continue;
+      }
+
+      LOG(INFO) << result->BriefReport() << endl << endl;
+      SaveResults(result_out_dir, sequence, fname, config, *result);
+    }
+    catch (bad_alloc &bad_alloc_ex) {
+      // This can happen when attempting to use dense linear solvers for huge problems.
+      LOG(ERROR) << "Could not run experiment because of insufficient memory. Continuing..." << endl;
+    }
+  }
+}
+
 /**
  * Runs the basic experiments used in the report.
  *
@@ -442,72 +479,32 @@ void SaveResults(
  *    * NO data analysis at all, but very rich dumping.
  *    * Resilient to, e.g., a few missing data files.
  */
-void Experiments(const std::map<std::string, std::vector<int>> &problems, const std::string &dataset_root) {
-//  vector<SummaryPtr> results;
-  // TODO flagify
-  std::string result_out_dir = "../experiments/00";
-
+void Experiments(
+    const std::string &dataset_root,
+    const std::string &result_out_dir,
+    const std::map<std::string, std::vector<int>> &problems
+) {
   ceres::Solver::Options base_options;
   base_options.max_num_iterations = 200;
   // Do not spend more than X minutes solving a problem.
   base_options.max_solver_time_in_seconds = 60 * 5;
-  base_options.num_threads = 32;
-  base_options.minimizer_progress_to_stdout = true;
+  base_options.num_threads = 24;
+  base_options.minimizer_progress_to_stdout = false;
 
   auto lm_configs = get_lm_configs(base_options);
-
-  // TODO(andreib): Use C++17 paths.
-  const std::string sequence = "trafalgar";
-  const std::string sequence_root = dataset_root + "/" + sequence + "/";
-
-  int i = 0;
-  for (const std::string &fname : kProblemFiles.at(sequence)) {
-    i++;
-    const vector<int> &sequence_problems = problems.at(sequence);
-    if (!sequence_problems.empty() &&
-        std::find(sequence_problems.cbegin(), sequence_problems.cend(), i) == sequence_problems.cend()) {
-      LOG(INFO) << "Skipping problem [" << i << "]...";
-      continue;
-    }
-
-    const std::string fpath = sequence_root + fname;
-    LOG(INFO) << "Experimenting on problem from file [" << fname << "].";
-
-    try {
-      auto config = lm_configs[0];
-      auto result = SolveSimpleBA(fpath, config);
-
-      if (result == nullptr) {
-        LOG(ERROR) << "Error running experiment..." << endl;
-        continue;
-      }
-
-      LOG(INFO) << result->FullReport() << std::endl << std::endl;
-      SaveResults(result_out_dir, sequence, fname, config, *result);
-    }
-    catch (std::bad_alloc &bad_alloc_ex) {
-      LOG(ERROR) << "Could not run experiment because of insufficient memory. Continuing..." << endl;
-    }
+  for (const auto &config : lm_configs) {
+    LOG(INFO) << "";
+    LOG(INFO) << "";
+    LOG(INFO) << "Processing config [" << config.get_details() << "]";
+    LOG(INFO) << "";
+    LOG(INFO) << "";
+    EvaluateOptimizerConfig(dataset_root, result_out_dir, problems, config);
   }
 }
-
-
-/// Splits a string using the given delimiter.
-/// Source: https://stackoverflow.com/a/236803/1055295
-template<typename Out>
-void split(const std::string &s, char delim, Out result) {
-  std::stringstream ss(s);
-  std::string item;
-  while (std::getline(ss, item, delim)) {
-    *(result++) = item;
-  }
-}
-
-std::vector<std::string> split(const std::string &s, char delim) {
-  std::vector<std::string> elems;
-  split(s, delim, std::back_inserter(elems));
-  return elems;
-}
+//void solve_problems(const string &dataset_root,
+//const string &result_out_dir,
+//const map<string, vector<int>> &problems,
+//const vector<ExperimentParams> &lm_configs) {
 
 std::map<std::string, std::vector<int>> ParseProblemList(const std::string &problem_list) {
   using namespace std;
@@ -528,8 +525,7 @@ std::map<std::string, std::vector<int>> ParseProblemList(const std::string &prob
     res[dataset] = vector<int>();
     if (entries == "ALL") {
       continue;
-    }
-    else {
+    } else {
       for (const string &nr : split(entries, ',')) {
         int entry = atoi(nr.c_str());
         if (0 == entry) {
@@ -551,13 +547,12 @@ int main(int argc, char **argv) {
   gflags::SetUsageMessage("Simple bundle adjustment solver benchmark.");
   gflags::ParseCommandLineFlags(&argc, &argv, true);
 
-  auto res = ParseProblemList(FLAGS_problem_list);
-  for (const auto &pair : res) {
+  auto problem_list = ParseProblemList(FLAGS_problem_list);
+  for (const auto &pair : problem_list) {
     std::cout << pair.first << " ";
     if (pair.second.empty()) {
       std::cout << "ALL";
-    }
-    else {
+    } else {
       for (int val : pair.second) {
         std::cout << val << " ";
       }
@@ -565,16 +560,7 @@ int main(int argc, char **argv) {
     std::cout << endl;
   }
 
-  Experiments(res, FLAGS_dataset_root);
-
-//    int idx = 0;
-//    for(auto result : results) {
-//        cout << labels_outer[idx / 4] << ", " << labels_inner[idx % 4] << ": \t"
-//             << result->initial_cost << " --> " << setprecision(12) << result->final_cost
-//             << " in [" << result->num_successful_steps << "] succesful. steps "
-//             << endl;
-//        idx += 1;
-//    }
+  Experiments(FLAGS_dataset_root, FLAGS_output_dir, problem_list);
 
   return 0;
 }
