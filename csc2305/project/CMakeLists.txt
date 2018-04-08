@@ -7,14 +7,20 @@ project(ceres)
 # version of Ceres for this project. If you build Ceres yourself with EXPORT_BUILD_DIR enabled,
 find_package(Ceres 1.14 REQUIRED)
 
+# Build gflags anywhere with -DREGISTER_BUILD_DIR=ON and this will work (no need to install).
+find_package(gflags REQUIRED)
+
 include_directories(${CERES_INCLUDE_DIRS})
+#include_directories(${GFLAGS_INCLUDE_DIRS})
 
-
+# We want to be bleeding-edge (native path support, stdlib multithreading, etc.)
 set(CMAKE_CXX_STANDARD 17)
-set(COMMON_SOURCE_FILES BALProblem.h)
-SET(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -O3 -fPIC -msse3")
+set(COMMON_SOURCE_FILES BALProblem.h CsvWriter.cpp BALProblem.cpp)
+SET(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -O3 -fPIC -msse3 -fopenmp")
 
 add_executable(ba ${COMMON_SOURCE_FILES} ba.cpp)
 
-target_link_libraries(ba ${CERES_LIBRARIES})
-#target_link_libraries(ba sophus)
+add_executable(openmp_hello ${COMMON_SOURCE_FILES} openmp.cpp)
+
+target_link_libraries(ba ${CERES_LIBRARIES} gflags)
+target_link_libraries(openmp_hello ${CERES_LIBRARIES})

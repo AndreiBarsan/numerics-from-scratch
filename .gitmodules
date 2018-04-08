@@ -4,3 +4,6 @@
 [submodule "csc2305/project/third_party/ceres-solver"]
 	path = csc2305/project/third_party/ceres-solver
 	url = https://ceres-solver.googlesource.com/ceres-solver
+[submodule "csc2305/project/third_party/gflags"]
+	path = csc2305/project/third_party/gflags
+	url = https://github.com/gflags/gflags
