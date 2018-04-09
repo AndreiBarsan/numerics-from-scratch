@@ -35,6 +35,9 @@ DEFINE_string(problem_list,
                   "instance, 'trafalgar:1,3,5' runs the first, third, and fifth problems from the trafalgar set, while "
                   "'venice:ALL; trafalgar:2,5' runs all the venice sequences and sequences 2 and 5 from the trafalgar "
                   "set.");
+DEFINE_int64(max_seconds_per_problem, 180, "The maximum time to spend on one (problem, params) configuration.");
+
+
 // TODO(andreib): Similar thing to problem_list, but for the optimizer configs.
 
 // TODO(andreib): Basic header with info about WTF is going on.
@@ -54,6 +57,7 @@ std::vector<std::string> kVeniceFiles = {
 // TODO(andreib): Mention removed ones.
 };
 
+// 14 in total
 std::vector<std::string> kTrafalgarFiles = {
     "problem-21-11315-pre.txt",
     "problem-39-18060-pre.txt",
@@ -267,15 +271,25 @@ struct ExperimentParams {
 
 ceres::TrustRegionStrategyType kTrStrategies[] = {
     ceres::TrustRegionStrategyType::LEVENBERG_MARQUARDT,
-    ceres::TrustRegionStrategyType::DOGLEG
+    ceres::TrustRegionStrategyType::DOGLEG,
+};
+ceres::DoglegType kDoglegTypes[] = {
+    ceres::DoglegType::TRADITIONAL_DOGLEG,
+    ceres::DoglegType::SUBSPACE_DOGLEG,
 };
 ceres::LinearSolverType kTrSolvers[] = {
+    // TODO(andreib): Describe this condition for elimination in your report, to explain why your
+    // plots don't even include these approaches.
+    // DENSE_NORMAL_CHOLESY takes 20-30 seconds even on a tiny problem with 21 images (trafalgar-1).
 //    ceres::LinearSolverType::DENSE_NORMAL_CHOLESKY,
+
+    // Same for 'DENSE_QR'. Spends >30-40s on the first iteration of the simplest problem, so ignored.
+    // Comparatively, sparse (or schur-complement) methods converge on this problem in 2-3 seconds at most.
 //    ceres::LinearSolverType::DENSE_QR,
-//    ceres::LinearSolverType::SPARSE_NORMAL_CHOLESKY,
+    ceres::LinearSolverType::SPARSE_NORMAL_CHOLESKY,
     ceres::LinearSolverType::DENSE_SCHUR,
     ceres::LinearSolverType::SPARSE_SCHUR,
-    ceres::LinearSolverType::CGNR
+    ceres::LinearSolverType::CGNR,
 };
 
 std::vector<ExperimentParams> get_lm_configs(const ceres::Solver::Options &base_options) {
@@ -289,6 +303,24 @@ std::vector<ExperimentParams> get_lm_configs(const ceres::Solver::Options &base_
     out.emplace_back(true, true, options);
   }
   return out;
+}
+
+std::vector<ExperimentParams> get_dogleg_configs(const ceres::Solver::Options &base_options) {
+  using namespace ceres;
+  std::vector<ExperimentParams> out;
+  for (DoglegType dogleg_type : kDoglegTypes) {
+    for (LinearSolverType solver : kTrSolvers) {
+      ceres::Solver::Options options = base_options;
+      options.minimizer_type = MinimizerType::TRUST_REGION;
+      options.trust_region_strategy_type = TrustRegionStrategyType::DOGLEG;
+      options.linear_solver_type = solver;
+      options.dogleg_type = dogleg_type;
+
+      out.emplace_back(true, true, options);
+    }
+  }
+  return out;
+
 }
 
 using Matrix34d = Eigen::Matrix<double, 3, 4>;
@@ -405,9 +437,9 @@ void SaveResults(
   ofstream out_meta(fpath_meta);
   ofstream out_raw(fpath_raw);
 
-  // Write the header
-  out << "iteration, cost, cost_change, eta, is_successful, is_valid, gradient_norm, step_norm, trust_region_radius,"
-      "line_search_iterations, linear_solver_iterations, step_solver_time_in_seconds, iteration_time_in_seconds, "
+  // Write the header (no spaces after commas because of performance reasons in Pandas).
+  out << "iteration,cost,cost_change,eta,is_successful,is_valid,gradient_norm,step_norm,trust_region_radius,"
+      "line_search_iterations,linear_solver_iterations,step_solver_time_in_seconds,iteration_time_in_seconds,"
       "cumulative_time_in_seconds" << std::endl;
 
   // Dump the iterations (yep, there's no detailed code for this in Ceres...)
@@ -416,13 +448,14 @@ void SaveResults(
         << it_summary.eta << "," << it_summary.step_is_successful << "," << it_summary.step_is_valid << ","
         << it_summary.gradient_norm << "," << it_summary.step_norm << "," << it_summary.trust_region_radius << ","
         << it_summary.line_search_iterations << "," << it_summary.linear_solver_iterations << ","
-        << it_summary.step_solver_time_in_seconds << "," << it_summary.iteration_time_in_seconds << ", "
+        << it_summary.step_solver_time_in_seconds << "," << it_summary.iteration_time_in_seconds << ","
         << it_summary.cumulative_time_in_seconds
         << std::endl;
   }
 
   // Dump the configuration data (subset of the full report, but easier to parse)
   // TODO(andreib): More data, maybe.
+  // TODO(andreib): Explicitly dump n_images and n_points from fname, + n_observations.
   out_meta << params.get_details() << std::endl;
 
   // Dump the raw final report
@@ -463,6 +496,12 @@ void EvaluateOptimizerConfig(const string &dataset_root,
 
       LOG(INFO) << result->BriefReport() << endl << endl;
       SaveResults(result_out_dir, sequence, fname, config, *result);
+
+      // This assumes the problem files are ordered in increasing order of difficulty.
+      if (fabs(result->total_time_in_seconds - static_cast<double>(FLAGS_max_seconds_per_problem)) <= 1.0) {
+        LOG(ERROR) << "Experiment timed out, not continuing with even larger problems...";
+        break;
+      }
     }
     catch (bad_alloc &bad_alloc_ex) {
       // This can happen when attempting to use dense linear solvers for huge problems.
@@ -486,10 +525,10 @@ void Experiments(
 ) {
   ceres::Solver::Options base_options;
   base_options.max_num_iterations = 200;
-  // Do not spend more than X minutes solving a problem.
-  base_options.max_solver_time_in_seconds = 60 * 5;
+  base_options.max_solver_time_in_seconds = FLAGS_max_seconds_per_problem;
   base_options.num_threads = 24;
-  base_options.minimizer_progress_to_stdout = false;
+//  base_options.minimizer_progress_to_stdout = false;
+  base_options.minimizer_progress_to_stdout = true;
 
   auto lm_configs = get_lm_configs(base_options);
   for (const auto &config : lm_configs) {
