@@ -11,16 +11,15 @@ find_package(Ceres 1.14 REQUIRED)
 find_package(gflags REQUIRED)
 
 include_directories(${CERES_INCLUDE_DIRS})
-#include_directories(${GFLAGS_INCLUDE_DIRS})
 
 # We want to be bleeding-edge (native path support, stdlib multithreading, etc.)
 set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -O3 -fPIC -msse3 -fopenmp")
+
 set(COMMON_SOURCE_FILES BALProblem.h CsvWriter.cpp BALProblem.cpp Utils.cpp)
-SET(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -O3 -fPIC -msse3 -fopenmp")
 
-add_executable(ba ${COMMON_SOURCE_FILES} ba.cpp)
-
+add_executable(ba_experiment ${COMMON_SOURCE_FILES} BundleAdjustment.cpp Experiment.cpp)
 add_executable(openmp_hello ${COMMON_SOURCE_FILES} openmp.cpp)
 
-target_link_libraries(ba ${CERES_LIBRARIES} gflags)
+target_link_libraries(ba_experiment ${CERES_LIBRARIES} gflags)
 target_link_libraries(openmp_hello ${CERES_LIBRARIES})

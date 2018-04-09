@@ -1,30 +1,24 @@
+//
+// Main subroutines for running Bundle Adjustment experiments.
+//
+
+#include <fstream>
 #include <iomanip>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
-#include <sstream>
 #include <vector>
 
-#include <Eigen/Eigen>
-
-#include <ceres/ceres.h>
-#include <ceres/rotation.h>
 #include <glog/logging.h>
 #include <gflags/gflags.h>
-#include <fstream>
+#include <Eigen/Eigen>
+#include <ceres/ceres.h>
 
+#include "BundleAdjustment.h"
 #include "BALProblem.h"
 #include "CsvWriter.h"
 #include "Utils.h"
-
-using namespace std;
-using ceres::AngleAxisRotatePoint;
-using ceres::AutoDiffCostFunction;
-using ceres::CauchyLoss;
-using ceres::CostFunction;
-using ceres::Problem;
-using ceres::Solve;
-using ceres::Solver;
 
 DEFINE_string(dataset_root, "../data",
               "The root folder where the BAL datasets are present. (See 'get_data.py' for more info.)");
@@ -37,10 +31,7 @@ DEFINE_string(problem_list,
                   "set.");
 DEFINE_int64(max_seconds_per_problem, 180, "The maximum time to spend on one (problem, params) configuration.");
 
-
-// TODO(andreib): Similar thing to problem_list, but for the optimizer configs.
-
-// TODO(andreib): Basic header with info about WTF is going on.
+using SummaryPtr = std::shared_ptr<ceres::Solver::Summary>;
 
 // Problem file name structure: problem-IMAGES-POINTS-OBSERVATIONS
 std::vector<std::string> kVeniceFiles = {
@@ -75,6 +66,7 @@ std::vector<std::string> kTrafalgarFiles = {
     "problem-257-65132-pre.txt",
 };
 
+// 16 in total
 std::vector<std::string> kDubrovnikFiles = {
     "problem-16-22106-pre.txt",
     "problem-88-64298-pre.txt",
@@ -99,95 +91,6 @@ std::map<std::string, std::vector<std::string>> kProblemFiles = {
     {"venice", kVeniceFiles},
     {"trafalgar", kTrafalgarFiles},
     {"dubrovnik", kDubrovnikFiles},
-};
-
-template<typename T>
-void transform_point(const T *camera, const T *point_world, bool reparametrized, T *result) {
-  if (reparametrized) {
-    // p = R'(p - t)
-    // Translate first
-    result[0] = point_world[0] - camera[3];
-    result[1] = point_world[1] - camera[4];
-    result[2] = point_world[2] - camera[5];
-
-    // Then rotate (using the transpose of the rotation matrix)
-    T neg_axis_angle[3];
-    neg_axis_angle[0] = -camera[0];
-    neg_axis_angle[1] = -camera[1];
-    neg_axis_angle[2] = -camera[2];
-    T p_cpy[3];
-    p_cpy[0] = result[0];
-    p_cpy[1] = result[1];
-    p_cpy[2] = result[2];
-    AngleAxisRotatePoint(neg_axis_angle, p_cpy, result);
-  } else {
-    // p = Rp + t
-    // Rotate the point
-    AngleAxisRotatePoint(camera, point_world, result);
-
-    // Apply the translation
-    result[0] += camera[3];
-    result[1] += camera[4];
-    result[2] += camera[5];
-  }
-}
-
-template<typename T>
-bool compute_reprojection_residual(const double observed_x,
-                                   const double observed_y,
-                                   const T *camera,
-                                   const T *point_world,
-                                   T *residuals,
-                                   bool enable_radial,
-                                   bool reparametrized) {
-  // camera[0, 1, 2] represents the rotation (angle-axis);
-  // Pc = R ( Pw + c )
-  T p[3];
-  transform_point(camera, point_world, reparametrized, p);
-
-  // Apply the projection
-  //   The sign change comes from the camera model assumed by the
-  //   bundler tool for which this dataset was originally designed,
-  //   which had a negative z-axis, that is, -z was in front of the
-  //   camera.
-  T x_center = -p[0] / p[2];
-  T y_center = -p[1] / p[2];
-
-  T distortion = T(1.0);
-  if (enable_radial) {
-    // Apply the radial distortion
-    //  (the second and fourth order radial distortion)
-    const T &l1 = camera[7];
-    const T &l2 = camera[8];
-    T r2 = x_center * x_center + y_center * y_center;
-    T r4 = r2 * r2;
-    distortion += r2 * l1 + r4 * l2;
-  }
-
-  // Compute the final projected point position
-  // It seems that the system just assumes the principal point is zero.
-  // This is just the convention used by the BAL dataset.
-  const T &focal = camera[6];
-  T predicted_x_2d = x_center * focal * distortion;
-  T predicted_y_2d = y_center * focal * distortion;
-
-  // TODO(andrei): What happens if we group these together into a distance, and then robustify?
-  // Ceres seems to not be hindered by the fact that x and y are separate when adding
-  // a robust estimator. Is the SciPy solver then weird, or does Ceres do anything special?
-  residuals[0] = predicted_x_2d - T(observed_x);
-  residuals[1] = predicted_y_2d - T(observed_y);
-
-  return true;
-}
-
-enum StrategyType {
-  LM,
-
-  // Only experimental support in Ceres; should only be used with SPARSE_SCHUR,
-  // DENSE_SCHUR, DENSE_QR, and SPARSE_NORMAL_CHOLESKY.
-      DOGLEG_TRADITIONAL,
-
-  DOGLEG_SUBSPACE,
 };
 
 struct ExperimentParams {
@@ -235,15 +138,15 @@ struct ExperimentParams {
     using namespace ceres;
     std::stringstream out_ss;
     out_ss << MinimizerTypeToString(solver_options.minimizer_type) << "-";
-    if (solver_options.minimizer_type == MinimizerType::TRUST_REGION) {
+    if (solver_options.minimizer_type == TRUST_REGION) {
       out_ss << TrustRegionStrategyTypeToString(solver_options.trust_region_strategy_type) << "-";
-      if (solver_options.trust_region_strategy_type == TrustRegionStrategyType::DOGLEG) {
+      if (solver_options.trust_region_strategy_type == DOGLEG) {
         out_ss << DoglegTypeToString(solver_options.dogleg_type) << "-";
       }
       out_ss << LinearSolverTypeToString(solver_options.linear_solver_type) << "-";
     } else {
       out_ss << LineSearchDirectionTypeToString(solver_options.line_search_direction_type) << "-";
-      if (solver_options.line_search_direction_type == LineSearchDirectionType::NONLINEAR_CONJUGATE_GRADIENT) {
+      if (solver_options.line_search_direction_type == NONLINEAR_CONJUGATE_GRADIENT) {
         out_ss << NonlinearConjugateGradientTypeToString(solver_options.nonlinear_conjugate_gradient_type) << "-";
       }
     }
@@ -266,17 +169,16 @@ struct ExperimentParams {
   }
 };
 
-// TODO(andreib): Organize your configs into functions, then put all together,
-// maybe based on command line flags, and run. (Each config on a subset of venice.)
-
 ceres::TrustRegionStrategyType kTrStrategies[] = {
-    ceres::TrustRegionStrategyType::LEVENBERG_MARQUARDT,
-    ceres::TrustRegionStrategyType::DOGLEG,
+    ceres::LEVENBERG_MARQUARDT,
+    ceres::DOGLEG,
 };
+
 ceres::DoglegType kDoglegTypes[] = {
-    ceres::DoglegType::TRADITIONAL_DOGLEG,
-    ceres::DoglegType::SUBSPACE_DOGLEG,
+    ceres::TRADITIONAL_DOGLEG,
+    ceres::SUBSPACE_DOGLEG,
 };
+
 ceres::LinearSolverType kTrSolvers[] = {
     // TODO(andreib): Describe this condition for elimination in your report, to explain why your
     // plots don't even include these approaches.
@@ -286,19 +188,19 @@ ceres::LinearSolverType kTrSolvers[] = {
     // Same for 'DENSE_QR'. Spends >30-40s on the first iteration of the simplest problem, so ignored.
     // Comparatively, sparse (or schur-complement) methods converge on this problem in 2-3 seconds at most.
 //    ceres::LinearSolverType::DENSE_QR,
-    ceres::LinearSolverType::SPARSE_NORMAL_CHOLESKY,
-    ceres::LinearSolverType::DENSE_SCHUR,
-    ceres::LinearSolverType::SPARSE_SCHUR,
-    ceres::LinearSolverType::CGNR,
+    ceres::SPARSE_NORMAL_CHOLESKY,
+    ceres::DENSE_SCHUR,
+    ceres::SPARSE_SCHUR,
+    ceres::CGNR,
 };
 
 std::vector<ExperimentParams> get_lm_configs(const ceres::Solver::Options &base_options) {
   using namespace ceres;
   std::vector<ExperimentParams> out;
   for (LinearSolverType solver : kTrSolvers) {
-    ceres::Solver::Options options = base_options;
-    options.minimizer_type = MinimizerType::TRUST_REGION;
-    options.trust_region_strategy_type = TrustRegionStrategyType::LEVENBERG_MARQUARDT;
+    Solver::Options options = base_options;
+    options.minimizer_type = TRUST_REGION;
+    options.trust_region_strategy_type = LEVENBERG_MARQUARDT;
     options.linear_solver_type = solver;
     out.emplace_back(true, true, options);
   }
@@ -310,9 +212,9 @@ std::vector<ExperimentParams> get_dogleg_configs(const ceres::Solver::Options &b
   std::vector<ExperimentParams> out;
   for (DoglegType dogleg_type : kDoglegTypes) {
     for (LinearSolverType solver : kTrSolvers) {
-      ceres::Solver::Options options = base_options;
-      options.minimizer_type = MinimizerType::TRUST_REGION;
-      options.trust_region_strategy_type = TrustRegionStrategyType::DOGLEG;
+      Solver::Options options = base_options;
+      options.minimizer_type = TRUST_REGION;
+      options.trust_region_strategy_type = DOGLEG;
       options.linear_solver_type = solver;
       options.dogleg_type = dogleg_type;
 
@@ -320,49 +222,9 @@ std::vector<ExperimentParams> get_dogleg_configs(const ceres::Solver::Options &b
     }
   }
   return out;
-
 }
 
-using Matrix34d = Eigen::Matrix<double, 3, 4>;
-using Matrix23d = Eigen::Matrix<double, 2, 3>;
-using Vector7d = Eigen::Matrix<double, 1, 7>;
-using SummaryPtr = shared_ptr<ceres::Solver::Summary>;
-
-struct SnavelyReprojectionError {
-  SnavelyReprojectionError(double observed_x, double observed_y, bool enable_radial, bool reparametrized)
-      : observed_x(observed_x),
-        observed_y(observed_y),
-        enable_radial(enable_radial),
-        reparametrized(reparametrized) {}
-
-  // Note that *this whole method is auto-diffable*, thanks to the 'AngleAxisRotatePoint' helper!
-  template<typename T>
-  bool operator()(const T *const camera, const T *const point, T *residuals) const {
-    return compute_reprojection_residual(observed_x, observed_y, camera, point, residuals, enable_radial,
-                                         reparametrized);
-  }
-
-  static ceres::CostFunction *Create(const double observed_x,
-                                     const double observed_y,
-                                     const ExperimentParams &test_params
-  ) {
-    // Two residuals and two param blocks, with 9 (camera) and 3 (3D point) params, respectively,
-    // hence the 2, 9, 3 template args.
-    return new ceres::AutoDiffCostFunction<SnavelyReprojectionError, 2, 9, 3>(
-        new SnavelyReprojectionError(observed_x, observed_y, test_params.enable_radial,
-                                     test_params.reparametrize));
-  }
-
-  double observed_x;
-  double observed_y;
-  bool enable_radial;
-  bool reparametrized;
-};
-
-//const string kBALVeniceSimple = "../data/venice/problem-89-110973-pre.txt";
-//const string kBALVeniceMed = "../data/venice/problem-427-310384-pre.txt";
-
-SummaryPtr SolveSimpleBA(const string &data_file_fpath, const ExperimentParams &experiment_params) {
+SummaryPtr SolveSimpleBA(const std::string &data_file_fpath, const ExperimentParams &experiment_params) {
   // Solves a problem from the BAL dataset.
 
   // Whether to also account for the cameras' radial distortion parameter.
@@ -372,7 +234,7 @@ SummaryPtr SolveSimpleBA(const string &data_file_fpath, const ExperimentParams &
   ceres::Problem problem;
   BALProblem bal_problem;
   if (!bal_problem.LoadFile(data_file_fpath.c_str(), reparametrize)) {
-    LOG(ERROR) << "Could not load data from file: " << data_file_fpath << endl;
+    LOG(ERROR) << "Could not load data from file: " << data_file_fpath << std::endl;
     return nullptr;
   }
 
@@ -380,9 +242,13 @@ SummaryPtr SolveSimpleBA(const string &data_file_fpath, const ExperimentParams &
     // Each residual depends on a 3D point and 9-param camera (calibration not assumed).
     double obs_x = bal_problem.observations()[2 * i + 0];
     double obs_y = bal_problem.observations()[2 * i + 1];
-    ceres::CostFunction *cost_function = SnavelyReprojectionError::Create(obs_x, obs_y, experiment_params);
+    ceres::CostFunction *cost_function = SnavelyReprojectionError::Create(
+        obs_x,
+        obs_y,
+        experiment_params.enable_radial,
+        experiment_params.reparametrize);
 
-    // Regular squared loss (no robust estimators, for simplicity).
+    // null loss function == regular squared loss (no robust estimators, for simplicity).
     ceres::LossFunction *loss_function = nullptr;
 
     problem.AddResidualBlock(
@@ -392,15 +258,14 @@ SummaryPtr SolveSimpleBA(const string &data_file_fpath, const ExperimentParams &
         bal_problem.mutable_point_for_observation(i));
   }
 
-  LOG(INFO) << "Finished preparing problem (" << bal_problem.num_observations() << " observations)." << endl;
+  LOG(INFO) << "Finished preparing problem (" << bal_problem.num_observations() << " observations)." << std::endl;
 
-  auto summary = make_shared<ceres::Solver::Summary>();
-  LOG(INFO) << "Starting to solve..." << endl;
+  auto summary = std::make_shared<ceres::Solver::Summary>();
+  LOG(INFO) << "Starting to solve..." << std::endl;
   ceres::Solve(experiment_params.solver_options, &problem, summary.get());
   LOG(INFO) << "Finished!";
   return summary;
 }
-
 /// Dumps the output of a single experimental run into three files.
 /// The files are the main CSV results (all iterations), a metadata file, and the Ceres Summary::FullReport output.
 ///
@@ -433,9 +298,9 @@ void SaveResults(
   LOG(INFO) << "\t" << fname_meta << std::endl;
   LOG(INFO) << "\t" << fname_raw << std::endl;
 
-  ofstream out(fpath);
-  ofstream out_meta(fpath_meta);
-  ofstream out_raw(fpath_raw);
+  std::ofstream out(fpath);
+  std::ofstream out_meta(fpath_meta);
+  std::ofstream out_raw(fpath_raw);
 
   // Write the header (no spaces after commas because of performance reasons in Pandas).
   out << "iteration,cost,cost_change,eta,is_successful,is_valid,gradient_norm,step_norm,trust_region_radius,"
@@ -462,39 +327,38 @@ void SaveResults(
   out_raw << summary.FullReport() << std::endl;
 
 }
-
 /// Solves every problem in the list using the given optimizer config and dumps the results to the given directory.
-void EvaluateOptimizerConfig(const string &dataset_root,
-                             const string &result_out_dir,
-                             const map<string, vector<int>> &problems,
+void EvaluateOptimizerConfig(const std::string &dataset_root,
+                             const std::string &result_out_dir,
+                             const std::map<std::string, std::vector<int>> &problems,
                              const ExperimentParams &config
 ) {
   // TODO(andreib): Use C++17 paths.
-  const string sequence = "trafalgar";
-  const string sequence_root = dataset_root + "/" + sequence + "/";
+  const std::string sequence = "trafalgar";
+  const std::string sequence_root = dataset_root + "/" + sequence + "/";
 
   int i = 0;
-  for (const string &fname : kProblemFiles.at(sequence)) {
+  for (const std::string &fname : kProblemFiles.at(sequence)) {
     i++;
-    const vector<int> &sequence_problems = problems.at(sequence);
+    const std::vector<int> &sequence_problems = problems.at(sequence);
     if (!sequence_problems.empty() &&
         find(sequence_problems.cbegin(), sequence_problems.cend(), i) == sequence_problems.cend()) {
       LOG(INFO) << "Skipping problem [" << i << "]...";
       continue;
     }
 
-    const string fpath = sequence_root + fname;
+    const std::string fpath = sequence_root + fname;
     LOG(INFO) << "Experimenting on problem from file [" << fname << "].";
 
     try {
       auto result = SolveSimpleBA(fpath, config);
 
       if (result == nullptr) {
-        LOG(ERROR) << "Error running experiment..." << endl;
+        LOG(ERROR) << "Error running experiment..." << std::endl;
         continue;
       }
 
-      LOG(INFO) << result->BriefReport() << endl << endl;
+      LOG(INFO) << result->BriefReport() << std::endl << std::endl;
       SaveResults(result_out_dir, sequence, fname, config, *result);
 
       // This assumes the problem files are ordered in increasing order of difficulty.
@@ -503,13 +367,12 @@ void EvaluateOptimizerConfig(const string &dataset_root,
         break;
       }
     }
-    catch (bad_alloc &bad_alloc_ex) {
+    catch (std::bad_alloc &bad_alloc_ex) {
       // This can happen when attempting to use dense linear solvers for huge problems.
-      LOG(ERROR) << "Could not run experiment because of insufficient memory. Continuing..." << endl;
+      LOG(ERROR) << "Could not run experiment because of insufficient memory. Continuing..." << std::endl;
     }
   }
 }
-
 /**
  * Runs the basic experiments used in the report.
  *
@@ -540,11 +403,6 @@ void Experiments(
     EvaluateOptimizerConfig(dataset_root, result_out_dir, problems, config);
   }
 }
-//void solve_problems(const string &dataset_root,
-//const string &result_out_dir,
-//const map<string, vector<int>> &problems,
-//const vector<ExperimentParams> &lm_configs) {
-
 std::map<std::string, std::vector<int>> ParseProblemList(const std::string &problem_list) {
   using namespace std;
   map<string, vector<int>> res;
@@ -576,15 +434,15 @@ std::map<std::string, std::vector<int>> ParseProblemList(const std::string &prob
   }
 
   return res;
-};
+}
 
 int main(int argc, char **argv) {
   google::InitGoogleLogging(argv[0]);
   google::SetStderrLogging(google::INFO);
   google::InstallFailureSignalHandler();
 
-  gflags::SetUsageMessage("Simple bundle adjustment solver benchmark.");
-  gflags::ParseCommandLineFlags(&argc, &argv, true);
+  google::SetUsageMessage("Simple bundle adjustment solver benchmark.");
+  google::ParseCommandLineFlags(&argc, &argv, true);
 
   auto problem_list = ParseProblemList(FLAGS_problem_list);
   for (const auto &pair : problem_list) {
@@ -596,7 +454,7 @@ int main(int argc, char **argv) {
         std::cout << val << " ";
       }
     }
-    std::cout << endl;
+    std::cout << std::endl;
   }
 
   Experiments(FLAGS_dataset_root, FLAGS_output_dir, problem_list);
