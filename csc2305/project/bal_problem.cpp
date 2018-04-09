@@ -1,4 +1,4 @@
-#include "BALProblem.h"
+#include "bal_problem.h"
 
 #include <glog/logging.h>
 #include <ceres/rotation.h>

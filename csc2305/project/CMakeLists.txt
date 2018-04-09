@@ -16,9 +16,9 @@ include_directories(${CERES_INCLUDE_DIRS})
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -O3 -fPIC -msse3 -fopenmp")
 
-set(COMMON_SOURCE_FILES BALProblem.h CsvWriter.cpp BALProblem.cpp Utils.cpp)
+set(COMMON_SOURCE_FILES bal_problem.h csv_writer.cpp bal_problem.cpp utils.cpp)
 
-add_executable(ba_experiment ${COMMON_SOURCE_FILES} BundleAdjustment.cpp Experiment.cpp)
+add_executable(ba_experiment ${COMMON_SOURCE_FILES} bundle_adjustment.cpp experiment.cpp)
 add_executable(openmp_hello ${COMMON_SOURCE_FILES} openmp.cpp)
 
 target_link_libraries(ba_experiment ${CERES_LIBRARIES} gflags)

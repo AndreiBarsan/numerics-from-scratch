@@ -25,11 +25,11 @@ class ICsvSerializable {
   virtual std::string GetData() const = 0;
 };
 
-class CsvWriter {
+class csv_writer {
  public:
   const std::string output_fpath_;
 
-  explicit CsvWriter(const std::string &output_fpath)
+  explicit csv_writer(const std::string &output_fpath)
     : output_fpath_(output_fpath),
       wrote_header_(false),
       output_(new std::ofstream(output_fpath))
@@ -39,14 +39,14 @@ class CsvWriter {
     }
   }
 
-  CsvWriter(const CsvWriter &) = delete;
-  CsvWriter(CsvWriter &&) = delete;
-  CsvWriter& operator=(const CsvWriter &) = delete;
-  CsvWriter& operator=(CsvWriter &&) = delete;
+  csv_writer(const csv_writer &) = delete;
+  csv_writer(csv_writer &&) = delete;
+  csv_writer& operator=(const csv_writer &) = delete;
+  csv_writer& operator=(csv_writer &&) = delete;
 
   void Write(const ICsvSerializable &data);
 
-  virtual ~CsvWriter() {
+  virtual ~csv_writer() {
     delete output_;
   }
 

@@ -15,10 +15,10 @@
 #include <Eigen/Eigen>
 #include <ceres/ceres.h>
 
-#include "BundleAdjustment.h"
-#include "BALProblem.h"
-#include "CsvWriter.h"
-#include "Utils.h"
+#include "bundle_adjustment.h"
+#include "bal_problem.h"
+#include "csv_writer.h"
+#include "utils.h"
 
 DEFINE_string(dataset_root, "../data",
               "The root folder where the BAL datasets are present. (See 'get_data.py' for more info.)");
