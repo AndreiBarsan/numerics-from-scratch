@@ -15,7 +15,6 @@ using ceres::Solve;
 using ceres::Solver;
 
 
-// TODO(andreib): Similar thing to problem_list, but for the optimizer configs.
 // TODO(andreib): Basic header with info about WTF is going on.
 
 template<typename T>

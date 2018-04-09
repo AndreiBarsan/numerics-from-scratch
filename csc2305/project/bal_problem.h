@@ -1,12 +1,12 @@
 #ifndef CERES_BALPROBLEM_H
 #define CERES_BALPROBLEM_H
 
-static const int kNumParamsPerCam = 9;
-
-static const int kNumParamsPer3DPoint = 3;
 
 #include <cstdio>
 #include <glog/logging.h>
+
+static const int kNumParamsPerCam = 9;
+static const int kNumParamsPer3DPoint = 3;
 
 // Read a Bundle Adjustment in the Large dataset.
 class BALProblem {
