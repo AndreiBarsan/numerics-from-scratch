@@ -92,17 +92,17 @@ ceres::DoglegType kDoglegTypes[] = {
 ceres::LinearSolverType kTrSolvers[] = {
     // TODO(andreib): Describe this condition for elimination in your report, to explain why your
     // plots don't even include these approaches.
-    // DENSE_NORMAL_CHOLESY takes 20-30 seconds even on a tiny problem with 21 images (trafalgar-1).
+    // DENSE_NORMAL_CHOLESY takes 2-3 HOURS even on a tiny problem with 21 images (trafalgar-1).
 //    ceres::LinearSolverType::DENSE_NORMAL_CHOLESKY,
 
-    // Same for 'DENSE_QR'. Spends >30-40s on the first iteration of the simplest problem, so ignored.
+    // Same for 'DENSE_QR'. Spends >8h on the first iteration of the simplest problem, so ignored.
     // Comparatively, sparse (or schur-complement) methods converge on this problem in 2-3 seconds at most.
 //    ceres::LinearSolverType::DENSE_QR,
-    ceres::SPARSE_NORMAL_CHOLESKY,
-    ceres::DENSE_SCHUR,
-    ceres::SPARSE_SCHUR,
-    ceres::CGNR,
-    ceres::ITERATIVE_SCHUR
+    ceres::LinearSolverType::SPARSE_NORMAL_CHOLESKY,
+    ceres::LinearSolverType::DENSE_SCHUR,
+    ceres::LinearSolverType::SPARSE_SCHUR,
+    ceres::LinearSolverType::CGNR,
+    ceres::LinearSolverType::ITERATIVE_SCHUR
 };
 
 struct ExperimentParams {

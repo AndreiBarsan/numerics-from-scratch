@@ -148,54 +148,58 @@ void EvaluateOptimizerConfig(const std::string &dataset_root,
                              const std::map<std::string, std::vector<int>> &problems,
                              const ExperimentParams &config
 ) {
-  // TODO(andreib): Use C++17 paths.
-  const std::string sequence = "trafalgar";
-  const std::string sequence_root = dataset_root + "/" + sequence + "/";
+  for (const auto &el : problems) {
+    const std::string sequence_name = el.first;
+    const std::vector<int> sequence_problems = el.second;
 
-  int i = 0;
-  for (const std::string &fname : kProblemFiles.at(sequence)) {
-    i++;
-    const std::vector<int> &sequence_problems = problems.at(sequence);
-    if (!sequence_problems.empty() &&
-        find(sequence_problems.cbegin(), sequence_problems.cend(), i) == sequence_problems.cend()) {
-      LOG(INFO) << "Skipping problem [" << i << "]...";
-      continue;
-    }
+    LOG(INFO) << "";
+    LOG(INFO) << "Processing sequence category [" << sequence_name << "].";
+    LOG(INFO) << "";
+    // TODO(andreib): Use C++17 paths.
+    const std::string sequence_root = dataset_root + "/" + sequence_name + "/";
 
-    const std::string fpath = sequence_root + fname;
-    LOG(INFO) << "Experimenting on problem from file [" << fname << "].";
-
-    try {
-      auto result = SolveSimpleBA(fpath, config);
-
-      if (result == nullptr) {
-        LOG(ERROR) << "Error running experiment..." << std::endl;
+    int i = 0;
+    for (const std::string &fname : kProblemFiles.at(sequence_name)) {
+      i++;
+      if (!sequence_problems.empty() &&
+          find(sequence_problems.cbegin(), sequence_problems.cend(), i) == sequence_problems.cend()) {
+        LOG(INFO) << "Skipping problem [" << i << "]...";
         continue;
       }
 
-      LOG(INFO) << result->BriefReport() << std::endl << std::endl;
-      SaveResults(result_out_dir, sequence, fname, config, *result);
+      const std::string fpath = sequence_root + fname;
+      LOG(INFO) << "Experimenting on problem from file [" << fname << "].";
 
-      // This assumes the problem files are ordered in increasing order of difficulty.
-      if (fabs(result->total_time_in_seconds - static_cast<double>(FLAGS_max_seconds_per_problem)) <= 1.0) {
-        LOG(ERROR) << "Experiment timed out, not continuing with even larger problems...";
-        break;
+      try {
+        auto result = SolveSimpleBA(fpath, config);
+
+        if (result == nullptr) {
+          LOG(ERROR) << "Error running experiment..." << std::endl;
+          continue;
+        }
+
+        LOG(INFO) << result->BriefReport() << std::endl << std::endl;
+        SaveResults(result_out_dir, sequence_name, fname, config, *result);
+
+        // This assumes the problem files are ordered in increasing order of difficulty.
+        if (fabs(result->total_time_in_seconds - static_cast<double>(FLAGS_max_seconds_per_problem)) <= 1.0) {
+          LOG(ERROR) << "Experiment timed out, not continuing with even larger problems...";
+          break;
+        }
       }
-    }
-    catch (std::bad_alloc &bad_alloc_ex) {
-      // This can happen when attempting to use dense linear solvers for huge problems.
-      LOG(ERROR) << "Could not run experiment because of insufficient memory. Continuing..." << std::endl;
+      catch (std::bad_alloc &bad_alloc_ex) {
+        // This can happen when attempting to use dense linear solvers for huge problems.
+        LOG(ERROR) << "Could not run experiment because of insufficient memory. Continuing..." << std::endl;
+      }
     }
   }
 }
-/**
- * Runs the basic experiments used in the report.
- *
- * The main design goals of this method:
- *    * Easy to re-do specific parts of the computation.
- *    * NO data analysis at all, but very rich dumping.
- *    * Resilient to, e.g., a few missing data files.
- */
+
+/// Runs the basic experiments described in the report.
+/// The main design goals of this method:
+///  * Easy to re-do specific parts of the computation.
+///  * NO data analysis at all, but very rich dumping.
+///  * Resilient to, e.g., a few missing data files.
 void Experiments(
     const std::string &dataset_root,
     const std::string &result_out_dir,
@@ -208,8 +212,13 @@ void Experiments(
 //  base_options.minimizer_progress_to_stdout = false;
   base_options.minimizer_progress_to_stdout = true;
 
-  auto configs = get_lm_configs(base_options);
-//  auto configs = get_dogleg_configs(base_options);
+  // TODO(andreib): Experiment doing this for CGNR and ITERATIVE_SCHUR.
+  // Default = 500
+  // Experiment = 10, 25, 50, 100, 250, 500, 750, 1000
+//  base_options.max_linear_solver_iterations = ???
+
+//  auto configs = get_lm_configs(base_options);
+  auto configs = get_dogleg_configs(base_options);
   for (const auto &config : configs) {
     LOG(INFO) << "";
     LOG(INFO) << "";
@@ -218,6 +227,8 @@ void Experiments(
     LOG(INFO) << "";
     EvaluateOptimizerConfig(dataset_root, result_out_dir, problems, config);
   }
+
+  LOG(INFO) << "Experiments complete.";
 }
 
 std::map<std::string, std::vector<int>> ParseProblemList(const std::string &problem_list) {
