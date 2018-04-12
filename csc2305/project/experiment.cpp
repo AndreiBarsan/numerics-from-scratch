@@ -94,6 +94,12 @@ void SaveResults(
   std::stringstream fname_ss;
   fname_ss << "results-" << dataset_name << "-" << problem_fname << "-" << params.get_label();
 
+  if (! is_dir(out_dir)) {
+    std::stringstream err_ss;
+    err_ss << "The output directory [" << out_dir << "] does not exist.";
+    throw std::runtime_error(err_ss.str());
+  }
+
   const std::string fname = fname_ss.str() + ".csv";
   const std::string fname_meta = fname_ss.str() + ".meta.txt";
   const std::string fname_raw = fname_ss.str() + ".raw_summary.txt";
@@ -108,13 +114,17 @@ void SaveResults(
   }
 
   LOG(INFO) << "Writing data to files:" << std::endl;
-  LOG(INFO) << "\t" << fname << std::endl;
-  LOG(INFO) << "\t" << fname_meta << std::endl;
+  LOG(INFO) << "\t" << fpath << std::endl;
+  LOG(INFO) << "\t" << fpath_meta << std::endl;
   LOG(INFO) << "\t" << fname_raw << std::endl;
 
   std::ofstream out(fpath);
   std::ofstream out_meta(fpath_meta);
   std::ofstream out_raw(fpath_raw);
+
+  CHECK(out.is_open());
+  CHECK(out_meta.is_open());
+  CHECK(out_raw.is_open());
 
   // Write the header (no spaces after commas because of performance reasons in Pandas).
   out << "iteration,cost,cost_change,eta,is_successful,is_valid,gradient_norm,step_norm,trust_region_radius,"
@@ -219,7 +229,14 @@ void Experiments(
   base_options.minimizer_progress_to_stdout = true;
 
 //  auto configs = get_lm_configs(base_options);
-  auto configs = get_dogleg_configs(base_options);
+//  auto configs = get_dogleg_configs(base_options);
+  auto configs = get_it_schur_configs(base_options);
+  // TODO(andreib): Experiment with varying final threshold.
+  // TODO(andreib): Prof was very excited when I mentioned reconstructing Rome. Perhaps I could plot a resulting
+  // pointcloud.
+  // TODO(andreib): VERY important!! Plot residual value over time for selected solvers, to show how much the
+  //                error goes down over time, what the initial residual is, etc. May need Y to be log scale.
+
   for (const auto &config : configs) {
     LOG(INFO) << "";
     LOG(INFO) << "";
