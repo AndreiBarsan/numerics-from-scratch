@@ -27,11 +27,15 @@ std::vector<std::string> kVeniceFiles = {
     "problem-427-310384-pre.txt",
     "problem-744-543562-pre.txt",
     "problem-951-708276-pre.txt",
+    // Skip 1
     "problem-1158-802917-pre.txt",
+    // Skip 2
     "problem-1288-866452-pre.txt",
+    // Skip 1
     "problem-1408-912229-pre.txt",
+    // Skip 2
     "problem-1490-935273-pre.txt",
-// TODO(andreib): Mention removed ones.
+    // Skip 13 very large problems due to time constraints.
 };
 
 // 14 in total
@@ -143,26 +147,39 @@ struct ExperimentParams {
         reparametrize(reparametrize),
         solver_options(solver_options) {}
 
-//  ExperimentParams& operator=(ExperimentParams &other) = default;
-
   /// Returns a representation of this object suitable for including as part of a file name.
   std::string get_label() const {
-    // TODO(andreib): Don't bother with parsing this in detail when processing the data. The complete info should be
-    // in the meta file anyway.
     using namespace ceres;
     std::stringstream out_ss;
     out_ss << MinimizerTypeToString(solver_options.minimizer_type) << "-";
     if (solver_options.minimizer_type == TRUST_REGION) {
+      //
+      // Trust region method config
+      //
       out_ss << TrustRegionStrategyTypeToString(solver_options.trust_region_strategy_type) << "-";
       if (solver_options.trust_region_strategy_type == DOGLEG) {
         out_ss << DoglegTypeToString(solver_options.dogleg_type) << "-";
       }
       out_ss << LinearSolverTypeToString(solver_options.linear_solver_type) << "-";
     } else {
+      //
+      // Line search method config
+      //
       out_ss << LineSearchDirectionTypeToString(solver_options.line_search_direction_type) << "-";
+      out_ss << LineSearchInterpolationTypeToString(solver_options.line_search_interpolation_type) << "-";
       if (solver_options.line_search_direction_type == NONLINEAR_CONJUGATE_GRADIENT) {
         out_ss << NonlinearConjugateGradientTypeToString(solver_options.nonlinear_conjugate_gradient_type) << "-";
       }
+
+      // Probably unused, but you never know.
+      out_ss << solver_options.max_lbfgs_rank << "-";
+    }
+    //
+    // Common components
+    //
+    out_ss << solver_options.max_linear_solver_iterations << "-";
+    if (solver_options.use_nonmonotonic_steps) {
+      out_ss << "nonmonotonic_steps" << "-";
     }
 
     out_ss << "params";
@@ -214,6 +231,26 @@ std::vector<ExperimentParams> get_dogleg_configs_internal(
   return out;
 }
 
+/// Used for experimenting the max iteration count of the iterative Schur solver in LM.
+/// Note: the iterative schur solver is not supported in dogleg.
+std::vector<ExperimentParams> get_it_schur_configs(const Solver::Options &base_options) {
+  using namespace ceres;
+  // Note: the Ceres default is 500.
+  int max_it_vals[] = { 10, 25, 50, 100, 250, 500, 750, 1000 };
+  std::vector<ExperimentParams> out;
+
+  for (const int &max_it : max_it_vals) {
+    Solver::Options options = base_options;
+    options.max_linear_solver_iterations = max_it;
+    options.minimizer_type = TRUST_REGION;
+    options.trust_region_strategy_type = LEVENBERG_MARQUARDT;
+    options.linear_solver_type = ITERATIVE_SCHUR;
+
+    out.emplace_back(true, true, options);
+  }
+  return out;
+}
+
 std::vector<ExperimentParams> get_traditional_dogleg_configs(const Solver::Options &base_options) {
   return get_dogleg_configs_internal(base_options, ceres::DoglegType::TRADITIONAL_DOGLEG);
 }
@@ -223,7 +260,9 @@ std::vector<ExperimentParams> get_subspace_dogleg_configs(const Solver::Options 
 }
 
 std::vector<ExperimentParams> get_line_search_configs(const Solver::Options &base_options) {
-  // TODO(andreib): should really try gauss newton somehow
+  // TODO(andreib): should really try gauss newton somehow. Consider asking mailing list. Basically GN is LM but
+  // where you never add the regularizer. I think there's a param for that, max_lm_diagonal. I *think* that if I set
+  // this to 0.0, then we degenerate into Gauss-Newton, but I'd have to dig a bit deeper.
   throw std::runtime_error("not yet implemented");
 }
 

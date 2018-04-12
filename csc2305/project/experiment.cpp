@@ -171,6 +171,9 @@ void EvaluateOptimizerConfig(const std::string &dataset_root,
       LOG(INFO) << "Experimenting on problem from file [" << fname << "].";
 
       try {
+        // TODO(andreib): The current tolerance seems inappropriate for very large problems. Perhaps it would make
+        // sense to set it as a function of the number of residuals. IMPORTANT: look at mean final residual per pixel
+        // before and after optimization! It's likely the residuals on average are super tiny even before BA!
         auto result = SolveSimpleBA(fpath, config);
 
         if (result == nullptr) {
@@ -182,7 +185,7 @@ void EvaluateOptimizerConfig(const std::string &dataset_root,
         SaveResults(result_out_dir, sequence_name, fname, config, *result);
 
         // This assumes the problem files are ordered in increasing order of difficulty.
-        if (fabs(result->total_time_in_seconds - static_cast<double>(FLAGS_max_seconds_per_problem)) <= 1.0) {
+        if (result->total_time_in_seconds > 1.0 + FLAGS_max_seconds_per_problem) {
           LOG(ERROR) << "Experiment timed out, not continuing with even larger problems...";
           break;
         }
@@ -206,16 +209,14 @@ void Experiments(
     const std::map<std::string, std::vector<int>> &problems
 ) {
   ceres::Solver::Options base_options;
-  base_options.max_num_iterations = 200;
+  // We set the maximum number of iterations to a very large value since (for experimentation and practical purposes)
+  // we care more about the maximum overall time. Ideally, we'd remove that cap as well, but we wish to run these
+  // experiments in a finite amount of time.
+  base_options.max_num_iterations = 20000;
   base_options.max_solver_time_in_seconds = FLAGS_max_seconds_per_problem;
   base_options.num_threads = 24;
 //  base_options.minimizer_progress_to_stdout = false;
   base_options.minimizer_progress_to_stdout = true;
-
-  // TODO(andreib): Experiment doing this for CGNR and ITERATIVE_SCHUR.
-  // Default = 500
-  // Experiment = 10, 25, 50, 100, 250, 500, 750, 1000
-//  base_options.max_linear_solver_iterations = ???
 
 //  auto configs = get_lm_configs(base_options);
   auto configs = get_dogleg_configs(base_options);
