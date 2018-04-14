@@ -19,6 +19,7 @@
 // TODO(andreib): Dedicated experiment with ls_iter limit.
 // TODO(andreib): Dedicated experiment to look at max processors.
 
+// 10 in total
 // Problem file name structure: problem-IMAGES-POINTS-OBSERVATIONS
 std::vector<std::string> kVeniceFiles = {
     "problem-52-64053-pre.txt",
