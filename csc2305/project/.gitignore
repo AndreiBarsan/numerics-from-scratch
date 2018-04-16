@@ -3,3 +3,4 @@ third_party/ceres-bin
 data/
 experiments/
 analysis/.ipynb_checkpoints/
+plots/
