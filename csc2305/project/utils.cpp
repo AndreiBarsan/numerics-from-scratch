@@ -24,5 +24,5 @@ bool is_dir(const std::string &path) {
     return false;
   }
 
-  return (info.st_mode & S_IFDIR != 0);
+  return (info.st_mode & S_IFDIR) != 0;
 }

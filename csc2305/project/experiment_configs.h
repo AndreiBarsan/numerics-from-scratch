@@ -103,11 +103,29 @@ ceres::LinearSolverType kTrSolvers[] = {
     // Same for 'DENSE_QR'. Spends >8h on the first iteration of the simplest problem, so ignored.
     // Comparatively, sparse (or schur-complement) methods converge on this problem in 2-3 seconds at most.
 //    ceres::LinearSolverType::DENSE_QR,
+
+    // OK performance, but nothing amazing.
+//    ceres::LinearSolverType::CGNR,
     ceres::LinearSolverType::SPARSE_NORMAL_CHOLESKY,
     ceres::LinearSolverType::DENSE_SCHUR,
     ceres::LinearSolverType::SPARSE_SCHUR,
-    ceres::LinearSolverType::CGNR,
     ceres::LinearSolverType::ITERATIVE_SCHUR
+};
+
+const std::vector<ceres::LineSearchDirectionType> kLsDirectionTypes = {
+    // Will likely be very slow
+    ceres::LineSearchDirectionType::STEEPEST_DESCENT,
+    ceres::LineSearchDirectionType::NONLINEAR_CONJUGATE_GRADIENT,
+    // Will probably crash almost instantly
+    // => getting warning from Ceres and very slow speed. Disabled due to limited time.
+//    ceres::LineSearchDirectionType::BFGS,
+    ceres::LineSearchDirectionType::LBFGS,
+};
+
+const std::vector<ceres::NonlinearConjugateGradientType> kCGTypes = {
+    ceres::NonlinearConjugateGradientType::FLETCHER_REEVES,
+    ceres::NonlinearConjugateGradientType::POLAK_RIBIERE,
+    ceres::NonlinearConjugateGradientType::HESTENES_STIEFEL,
 };
 
 struct ExperimentParams {
@@ -201,14 +219,47 @@ struct ExperimentParams {
   }
 };
 
+
+// TODO(andreib): should really try gauss newton somehow. Consider asking mailing list. Basically GN is LM but
+// where you never add the regularizer. I think there's a param for that, max_lm_diagonal. I *think* that if I set
+// this to 0.0, then we degenerate into Gauss-Newton, but I'd have to dig a bit deeper.
+std::vector<ExperimentParams> get_line_search_configs(const Solver::Options &base_options) {
+  using namespace ceres;
+  std::vector<ExperimentParams> out;
+
+  for (LineSearchDirectionType ls_dir_type : kLsDirectionTypes) {
+    Solver::Options options = base_options;
+    options.minimizer_type = MinimizerType::LINE_SEARCH;
+    options.line_search_direction_type = ls_dir_type;
+    options.line_search_type = LineSearchType::WOLFE;
+    options.min_line_search_step_size = 1e-12;    // Default: 1e-09
+
+
+    if (ls_dir_type == LineSearchDirectionType::NONLINEAR_CONJUGATE_GRADIENT) {
+      for (NonlinearConjugateGradientType nl_cg_type : kCGTypes) {
+        options.nonlinear_conjugate_gradient_type = nl_cg_type;
+        out.emplace_back(true, true, options);
+      }
+    }
+    else {
+      out.emplace_back(true, true, options);
+    }
+  }
+
+  CHECK(out.size() == kLsDirectionTypes.size() + kCGTypes.size() - 1);
+  return out;
+}
+
+
 std::vector<ExperimentParams> get_lm_configs(const Solver::Options &base_options) {
   using namespace ceres;
   std::vector<ExperimentParams> out;
   for (LinearSolverType solver : kTrSolvers) {
     Solver::Options options = base_options;
-    options.minimizer_type = TRUST_REGION;
-    options.trust_region_strategy_type = LEVENBERG_MARQUARDT;
+    options.minimizer_type = MinimizerType::TRUST_REGION;
+    options.trust_region_strategy_type = TrustRegionStrategyType::LEVENBERG_MARQUARDT;
     options.linear_solver_type = solver;
+
     out.emplace_back(true, true, options);
   }
   return out;
@@ -258,13 +309,6 @@ std::vector<ExperimentParams> get_traditional_dogleg_configs(const Solver::Optio
 
 std::vector<ExperimentParams> get_subspace_dogleg_configs(const Solver::Options &base_options) {
   return get_dogleg_configs_internal(base_options, ceres::DoglegType::SUBSPACE_DOGLEG);
-}
-
-std::vector<ExperimentParams> get_line_search_configs(const Solver::Options &base_options) {
-  // TODO(andreib): should really try gauss newton somehow. Consider asking mailing list. Basically GN is LM but
-  // where you never add the regularizer. I think there's a param for that, max_lm_diagonal. I *think* that if I set
-  // this to 0.0, then we degenerate into Gauss-Newton, but I'd have to dig a bit deeper.
-  throw std::runtime_error("not yet implemented");
 }
 
 std::vector<ExperimentParams> get_dogleg_configs(const Solver::Options &base_options) {

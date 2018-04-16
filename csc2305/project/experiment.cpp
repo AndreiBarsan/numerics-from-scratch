@@ -228,8 +228,9 @@ void Experiments(
 //  base_options.minimizer_progress_to_stdout = false;
   base_options.minimizer_progress_to_stdout = true;
 
+  auto configs = get_line_search_configs(base_options);
 //  auto configs = get_lm_configs(base_options);
-  auto configs = get_dogleg_configs(base_options);
+//  auto configs = get_dogleg_configs(base_options);
 //  auto configs = get_it_schur_configs(base_options);
   // TODO(andreib): Experiment with varying final threshold.
   // TODO(andreib): Prof was very excited when I mentioned reconstructing Rome. Perhaps I could plot a resulting
