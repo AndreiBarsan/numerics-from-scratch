@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
+# Installs CMake either globally, if run with the option 'sudo' or for the current user if 'no-sudo' is passed.
 
-# TODO(andrei): Version check.
+set -eu
 
 CPU_COUNT=$(grep -c ^processor /proc/cpuinfo)
 CPU_COUNT=$(nproc)
 CMAKE_VER="3.10.0"
-
-set -eu
 
 cd /tmp/
 
@@ -14,7 +13,6 @@ mkdir -p cmake
 cd cmake
 wget --no-check-certificate https://github.com/Kitware/CMake/archive/v${CMAKE_VER}.tar.gz || exit 1
 tar xf v${CMAKE_VER}.tar.gz >/dev/null
-# cd CMake-3.2.2
 cd CMake-$CMAKE_VER
 
 echo "Configuring CMake $CMAKE_VER..."

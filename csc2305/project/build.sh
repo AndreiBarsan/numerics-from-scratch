@@ -2,7 +2,7 @@
 
 set -eu
 
-./install_cmake.sh NO_SUDO
+scripts/install_cmake.sh NO_SUDO
 
 (
     # Build Ceres

@@ -16,6 +16,7 @@
        about 6GiB of disk space.
   2. Build the code using CMake.
      1. Ensure you have a modern version of CMake, i.e., `>3.2`.
+        * You can use `scripts/install_cmake.sh no-sudo` to install a recent one for the local user.
      2. For a quick-and-dirty way of checking out the code, install the Ceres 
         libraries on your system from your package manager. On Debian-like distributions 
         of Linux, this should be:
@@ -42,6 +43,8 @@
         ```bash
         mkdir build && cd $_ && cmake .. && make -j$(nproc)
         ```
+     5. (Experimental) The script `build.sh` attempts to automate the above steps, but may
+        not work out of the box on all systems.
   3. The analysis code used to produce the plots and the other results in the 
     report is based on the Python code from the `analysis/` subdirectory. Its 
     dependencies can be resolved very efficiently using a Python virtual 
