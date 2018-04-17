@@ -109,7 +109,7 @@ ceres::LinearSolverType kTrSolvers[] = {
     ceres::LinearSolverType::SPARSE_NORMAL_CHOLESKY,
     ceres::LinearSolverType::DENSE_SCHUR,
     ceres::LinearSolverType::SPARSE_SCHUR,
-    ceres::LinearSolverType::ITERATIVE_SCHUR
+//    ceres::LinearSolverType::ITERATIVE_SCHUR
 };
 
 const std::vector<ceres::LineSearchDirectionType> kLsDirectionTypes = {
@@ -265,6 +265,7 @@ std::vector<ExperimentParams> get_lm_configs(const Solver::Options &base_options
   return out;
 }
 
+/// Powell's Dogleg experiments using different linear solvers.
 std::vector<ExperimentParams> get_dogleg_configs_internal(
     const Solver::Options &base_options,
     ceres::DoglegType dogleg_type
