@@ -1,4 +1,4 @@
-/// Very simple exploration of OpenMP primitives.
+/// An OpenMP hello world. Very simple exploration of OpenMP primitives.
 
 #include <iostream>
 

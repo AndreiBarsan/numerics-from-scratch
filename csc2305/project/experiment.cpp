@@ -17,7 +17,6 @@
 
 #include "bundle_adjustment.h"
 #include "bal_problem.h"
-#include "csv_writer.h"
 #include "utils.h"
 #include "experiment_configs.h"
 
@@ -94,7 +93,7 @@ void SaveResults(
   std::stringstream fname_ss;
   fname_ss << "results-" << dataset_name << "-" << problem_fname << "-" << params.get_label();
 
-  if (! is_dir(out_dir)) {
+  if (!IsDir(out_dir)) {
     std::stringstream err_ss;
     err_ss << "The output directory [" << out_dir << "] does not exist.";
     throw std::runtime_error(err_ss.str());
@@ -108,7 +107,7 @@ void SaveResults(
   const std::string fpath_meta = out_dir + "/" + fname_meta;
   const std::string fpath_raw = out_dir + "/" + fname_raw;
 
-  if (FileExists(fpath)) {
+  if (PathExists(fpath)) {
     // TODO-LOW(andreib): Consider erroring out, or checking this in advance.
     LOG(WARNING) << "Results file [" << fpath << "] already exists. Will overwrite." << std::endl;
   }
@@ -254,10 +253,10 @@ std::map<std::string, std::vector<int>> ParseProblemList(const std::string &prob
   using namespace std;
   map<string, vector<int>> res;
 
-  vector<string> dataset_specs = split(problem_list, ';');
+  vector<string> dataset_specs = Split(problem_list, ';');
   for (const string &spec : dataset_specs) {
     LOG(INFO) << "Parsing spec: " << spec << endl;
-    vector<string> spec_pair = split(spec, ':');
+    vector<string> spec_pair = Split(spec, ':');
     CHECK_EQ(spec_pair.size(), 2) << "Sequence spec must follow the format NAME:a,b,c or NAME:ALL";
 
     string dataset = spec_pair[0];
@@ -270,7 +269,7 @@ std::map<std::string, std::vector<int>> ParseProblemList(const std::string &prob
     if (entries == "ALL") {
       continue;
     } else {
-      for (const string &nr : split(entries, ',')) {
+      for (const string &nr : Split(entries, ',')) {
         int entry = atoi(nr.c_str());
         if (0 == entry) {
           LOG(FATAL) << "Invalid entry [" << nr << "]. Must be a strictly positive integer.";
