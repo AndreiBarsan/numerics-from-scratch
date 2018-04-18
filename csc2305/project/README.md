@@ -1,13 +1,15 @@
-# Comparing the Performance of Nonlinear Solvers for Bundle Adjustment
+# A Brief Survey of Optimization Methods for Large-Scale Bundle Adjustment Problems
 
 ## Overview
 
 |  | Info  |
 |---|---|
-| Course | CSC2305
+| Author | Ioan Andrei Bârsan
+| Course | CSC2305, University of Toronto
 | Term | Winter 2018
 | Instructor | Professor Kenneth R. Jackson
 | Languages | C++ and Python
+| Project URL | https://github.com/AndreiBarsan/numerics-from-scratch
 
 ## Instructions
 
@@ -33,7 +35,8 @@
         cmake ../ceres-solver -DEXPORT_BUILD_DIR=ON  
         make -j$(nproc)
         ```
-        (Please see the Ceres docs for information on any necessary dependencies, such as OpenMP and Eigen.)
+        (Please see the Ceres docs for information on any necessary dependencies, such as OpenMP,
+        Eigen, and, perhaps most importantly, SuiteSparse.)
      3. Set up `gflags` (no need to make install).
         ```bash
         cd third_party/gflags && mkdir build && cd $_ && cmake .. -DREGISTER_BUILD_DIR=ON && make -j$(nproc)
@@ -47,7 +50,7 @@
         not work out of the box on all systems.
   3. The analysis code used to produce the plots and the other results in the 
     report is based on the Python code from the `analysis/` subdirectory. Its 
-    dependencies can be resolved very efficiently using a Python virtual 
+    dependencies can be resolved very effectively using a Python virtual 
     environment or Anaconda.
         ```bash
          cd analysis
