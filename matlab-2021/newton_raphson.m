@@ -7,8 +7,6 @@
 % a pain in the butt, lol.
 %
 
-fprintf('Newton-Raphson example:\n');
-
 % Basic arguments
 x_0 =           15.0;                             % Initial guess
 f =             @f_example_from_wikipedia;        % Function to optimize
@@ -17,8 +15,10 @@ eps_threshold = 1e-5;                             % Convergence threshold
 max_iters =     100;                              % Maximum number of iterations
 
 
-% Main loop
-x = x_0
+% Main loop: Perform the Newton step until convergence, or until the maximum
+% number of steps is reached.
+fprintf('Newton-Raphson example:\n');
+x = x_0;
 for i = 1:max_iters
   x_new = x - f(x) / f_prime(x);
   if abs(x_new - x) < eps_threshold
@@ -27,9 +27,8 @@ for i = 1:max_iters
   x = x_new;
 end
 
-
-fprintf('Found root:  %12.4f in %d step(s)\n', x, i)
-fprintf('Final value: %12.4f = f(%.4f)\n', f(x), x)
+fprintf('Found root:  %12.4f in %d step(s)\n', x, i);
+fprintf('Final value: %12.4f = f(%.4f)\n', f(x), x);
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
